@@ -2,6 +2,13 @@
 
 All notable changes to PaintPort. Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [0.4.1] — 2026-07-06
+
+### Added
+- Language switcher (Deutsch/English) directly in the welcome overlay — language is auto-detected
+  from the browser (German → DE, everything else → EN) and can now be changed without leaving
+  the first-run dialog. Header and overlay switchers stay in sync.
+
 ## [0.4.0] — 2026-07-06
 
 First public release.

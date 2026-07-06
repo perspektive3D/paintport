@@ -108,6 +108,7 @@ footer a{color:var(--txd)}
 .modal{position:fixed;inset:0;background:rgba(29,29,27,.55);backdrop-filter:blur(5px);z-index:300;display:none;align-items:center;justify-content:center;padding:20px}
 .modal.vis{display:flex}
 .mbox{background:var(--card);border:1px solid var(--card-bd);border-radius:var(--radius-lg);max-width:560px;width:100%;max-height:88vh;overflow-y:auto;padding:28px;position:relative;box-shadow:var(--shadow-lg)}
+.mlang{display:flex;gap:6px;margin-bottom:14px}
 .mclose{position:absolute;top:14px;right:14px;background:transparent;color:var(--txd);border:2px solid var(--bd);border-radius:var(--radius-pill);width:32px;height:32px;padding:0;font-size:13px}
 .mlogo{font-family:var(--font-display);font-weight:700;font-size:21px;letter-spacing:-.02em;margin-bottom:6px}
 .mlogo span{color:var(--brand)}
@@ -152,8 +153,8 @@ body.dark .warnbox{background:var(--koralle);color:var(--warmweiss)}
     <a class="brandline" href="https://www.youtube.com/@perspektive3d" target="_blank" rel="noopener">by <svg class="p3dlogo" viewBox="0 0 1200 280" role="img" aria-label="perspektive3D"><use href="#p3dlogoSym"/></svg></a>
   </div>
   <div class="ctrl">
-    <button class="langbtn" id="langDe" onclick="setLang('de')">DE</button>
-    <button class="langbtn" id="langEn" onclick="setLang('en')">EN</button>
+    <button class="langbtn langsel" data-lang="de" onclick="setLang('de')">DE</button>
+    <button class="langbtn langsel" data-lang="en" onclick="setLang('en')">EN</button>
     <button class="langbtn" id="themeBtn" onclick="toggleTheme()" title="Hell / Dunkel">☾</button>
     <button class="langbtn" onclick="openModal('helpModal')" title="Hilfe / Help">?</button>
   </div>
@@ -216,6 +217,10 @@ Es wird kein Code dieser Projekte ausgeliefert; Formate wurden zur Interoperabil
 <div class="modal" id="helpModal">
   <div class="mbox">
     <button class="mclose" onclick="closeModal('helpModal')">✕</button>
+    <div class="mlang">
+      <button class="langbtn langsel" data-lang="de" onclick="setLang('de')">Deutsch</button>
+      <button class="langbtn langsel" data-lang="en" onclick="setLang('en')">English</button>
+    </div>
     <div class="mlogo">Paint<span>Port</span></div>
     <a class="brandline" href="https://www.youtube.com/@perspektive3d" target="_blank" rel="noopener" style="margin-bottom:8px">by <svg class="p3dlogo" viewBox="0 0 1200 280" role="img" aria-label="perspektive3D"><use href="#p3dlogoSym"/></svg></a>
     <p data-i18n="help.tagline">Bemalte Bambu-/MakerWorld-Modelle mit den richtigen Farben auf dem Prusa Core One INDX drucken — komplett lokal im Browser.</p>
@@ -270,7 +275,7 @@ Es wird kein Code dieser Projekte ausgeliefert; Formate wurden zur Interoperabil
 // ============================================================
 "use strict";
 
-const PAINTPORT_VERSION = "0.4.0"; // einzige Versions-Quelle (UI-Badge + Generator-Metadata)
+const PAINTPORT_VERSION = "0.4.1"; // einzige Versions-Quelle (UI-Badge + Generator-Metadata)
 
 // Core-Fehler: englische Message + stabiler err.code (UI übersetzt via I18N "err.<code>")
 const CORE_ERRORS = {
@@ -1087,8 +1092,7 @@ function applyI18n() {
   document.title = t("app.title");
   document.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
   document.querySelectorAll("[data-i18n-html]").forEach((el) => { el.innerHTML = t(el.dataset.i18nHtml); });
-  $("langDe").classList.toggle("act", LANG === "de");
-  $("langEn").classList.toggle("act", LANG === "en");
+  document.querySelectorAll(".langsel").forEach((b) => b.classList.toggle("act", b.dataset.lang === LANG));
   if (MODEL) { renderAnalyse(); renderMapping(); }
 }
 function setLang(l) { LANG = l; store.set("paintport_lang", l); applyI18n(); }
