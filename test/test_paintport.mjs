@@ -31,6 +31,17 @@ for (const o of model.objects) {
 }
 console.log(`Paint-String-Roundtrip: ${checked} geprüft, ${mismatches} Abweichungen`);
 
+// topMixes-Sanity (Kandidatenliste für die Mapping-UI)
+{
+  const slots5 = [{ slot: 1, color: "#FFFFFF" }, { slot: 2, color: "#000000" }, { slot: 3, color: "#00FFFF" }, { slot: 4, color: "#FF00FF" }, { slot: 5, color: "#FFFF00" }];
+  const tm = FW.topMixes("#0000FF", slots5, 6);
+  const sorted = tm.every((m, i, a) => !i || a[i - 1].deltaE <= m.deltaE);
+  const dedup = new Set(tm.map((m) => m.predicted)).size === tm.length;
+  const bm = JSON.stringify(FW.bestMix("#0000FF", slots5)) === JSON.stringify(tm[0]);
+  console.log(`topMixes: n=${tm.length} sortiert=${sorted} dedupe=${dedup} best==top0=${bm}`);
+  if (!(tm.length === 6 && sorted && dedup && bm)) { console.error("topMixes-Check FEHLGESCHLAGEN"); process.exit(1); }
+}
+
 // Mapping-Plan je nach Modus
 const n = model.filaments.length;
 const stateMap = new Map();

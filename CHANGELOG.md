@@ -2,6 +2,24 @@
 
 All notable changes to PaintPort. Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [0.6.0] — 2026-07-07
+
+### Added
+- **3D print preview** (step 4): renders the model with a toggle between the file's original
+  colors and the mapped INDX result — updates live while you change the mapping. Hand-written
+  WebGL2, no external libraries, stays fully offline. Color impression uses the dominant paint
+  state per triangle; negative/modifier volumes are hidden.
+- **Selectable ColorMix alternatives**: the target dropdown now lists the ranked blend
+  candidates ("ColorMix alternative 1…n", predicted color + ΔE) instead of only an automatic
+  pick — e.g. shift a blue that would auto-map to a purple blend toward a bluer mix. Pinned
+  blends export exactly as chosen. Dropdown entries are color-coded (option rows show the
+  actual slot/blend color where the browser supports it; the closed select always does).
+- **Collision warning**: if two clearly different model colors would map to nearly the same
+  result color (ΔE < 10 while the sources differ by ΔE > 15), both rows get a warning badge —
+  found by a user whose purple and blue mapped to the identical blend.
+- **Free-slot tip**: when a blend stays poor (ΔE > 40) and printer slots are unused, PaintPort
+  suggests loading a real matching spool instead.
+
 ## [0.5.0] — 2026-07-07
 
 ### Fixed

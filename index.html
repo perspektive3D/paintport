@@ -96,6 +96,8 @@ button.ghost{background:transparent;color:var(--brand);border-color:var(--brand)
 #status.err{color:var(--err);font-weight:500}
 body.dark #status.err{color:var(--warmweiss);background:var(--koralle);border-radius:var(--radius-md);padding:8px 12px}
 .badge{display:inline-block;background:var(--soft);color:var(--brand);border-radius:var(--radius-pill);padding:2px 10px;font-size:11px;font-weight:700;margin-left:6px}
+.badge.warn{background:var(--koralle);color:var(--warmweiss)}
+.pv-on{background:var(--brand)!important;color:var(--warmweiss)!important}
 footer{color:var(--txd);font-size:11.5px;margin-top:28px;line-height:1.7}
 footer a{color:var(--txd)}
 .footlinks{margin-top:6px}
@@ -190,15 +192,26 @@ Filamente den INDX-Slots zuordnen, fehlende Farben optional als ColorMix-Mischun
 </div>
 
 <div class="card hidden" id="cardMap">
-  <h2 data-i18n="step.map">3 · Zuordnung Modellfarben → INDX</h2>
-  <table id="mapTable"><thead><tr><th data-i18n="map.colFilament">Modell-Filament</th><th data-i18n="map.colShare">Anteil</th><th data-i18n="map.colTarget">Ziel</th><th data-i18n="map.colResult">Ergebnis</th></tr></thead><tbody></tbody></table>
-  <div class="row" style="margin-top:12px">
-    <button class="ghost" onclick="autoMap()" data-i18n="map.autoBtn">Auto-Zuordnung (Farbabstand)</button>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+    <h2 data-i18n="step.map" style="margin-bottom:0">3 · Zuordnung Modellfarben → INDX</h2>
+    <button onclick="autoMap()" data-i18n="map.autoBtn" style="padding:9px 18px">Auto-Zuordnung (Farbabstand)</button>
   </div>
+  <table id="mapTable"><thead><tr><th data-i18n="map.colFilament">Modell-Filament</th><th data-i18n="map.colShare">Anteil</th><th data-i18n="map.colTarget">Ziel</th><th data-i18n="map.colResult">Ergebnis</th></tr></thead><tbody></tbody></table>
+  <div class="warnbox hidden" id="mapTip" style="margin-top:10px"></div>
+</div>
+
+<div class="card hidden" id="cardPreview">
+  <h2 data-i18n="preview.title">4 · Vorschau</h2>
+  <div class="row" style="margin-bottom:10px">
+    <button class="ghost" id="pvBtnOriginal" onclick="setPreviewMode('original')" data-i18n="preview.original">Original (Datei)</button>
+    <button class="ghost" id="pvBtnResult" onclick="setPreviewMode('result')" data-i18n="preview.result">Ergebnis (INDX)</button>
+  </div>
+  <canvas id="pvCanvas" style="width:100%;height:440px;display:block;border-radius:var(--radius-md);background:var(--soft);touch-action:none"></canvas>
+  <div class="hint" data-i18n="preview.hint">Farbeindruck (dominanter Paint-State pro Dreieck; Negativ-/Modifier-Volumes ausgeblendet). Ziehen = drehen · Rad = zoomen · Shift/Rechtsklick-Ziehen = verschieben.</div>
 </div>
 
 <div class="card hidden" id="cardExport">
-  <h2 data-i18n="step.export">4 · Export</h2>
+  <h2 data-i18n="step.export">5 · Export</h2>
   <div class="row">
     <button id="btnExport" onclick="doExport()" data-i18n="export.btn">3MF für PrusaSlicer exportieren</button>
     <span class="hint" style="margin-top:0" data-i18n-html="export.hint">Ausgabe in PrusaSlicer 2.9.6+ <b>als Projekt öffnen</b> (Datei → Öffnen; beim Drag&amp;Drop im Dialog „Als Projekt öffnen" wählen — nur dann lädt PrusaSlicer die virtuellen Extruder und Slot-Farben). Drucker: Core One INDX. ColorMix-Zuordnungen sind experimentell.</span>
@@ -275,7 +288,7 @@ Es wird kein Code dieser Projekte ausgeliefert; Formate wurden zur Interoperabil
 // ============================================================
 "use strict";
 
-const PAINTPORT_VERSION = "0.5.0"; // einzige Versions-Quelle (UI-Badge + Generator-Metadata)
+const PAINTPORT_VERSION = "0.6.0"; // einzige Versions-Quelle (UI-Badge + Generator-Metadata)
 
 // Core-Fehler: englische Message + stabiler err.code (UI übersetzt via I18N "err.<code>")
 const CORE_ERRORS = {
@@ -736,6 +749,7 @@ async function load3MF(bytes) {
   const baseCount = new Map(); // Basis-Extruder → unbemalte Dreiecke seiner Parts
   let unpainted = 0, totalTris = 0, specialVolumes = 0;
   for (const o of outObjects) {
+    o.triState = new Int16Array(o.paints.length); // dominanter Leaf-State je Dreieck (0 = unbemalt), für die Vorschau
     for (const pr of o.parts) {
       if (pr.type !== "ModelPart") { specialVolumes++; continue; }
       totalTris += pr.triCount;
@@ -743,7 +757,14 @@ async function load3MF(bytes) {
       for (let i = pr.firstTri; i < pr.firstTri + pr.triCount; i++) {
         const p = o.paints[i];
         if (!p) { unpainted++; base++; continue; }
-        collectStates(p, stateCount);
+        const local = new Map();
+        collectStates(p, local);
+        let dom = 0, domN = 0;
+        for (const [s, c] of local) {
+          stateCount.set(s, (stateCount.get(s) || 0) + c);
+          if (c > domN || (c === domN && s > dom)) { domN = c; dom = s; }
+        }
+        o.triState[i] = dom;
       }
       if (base) baseCount.set(pr.extruder, (baseCount.get(pr.extruder) || 0) + base);
     }
@@ -814,14 +835,16 @@ function predictMix(components) {
   }
   return rgbToHex(mixed.map((v) => linearToSrgb(Math.pow(v, YN))));
 }
-// Beste ColorMix-Mischung (PrusaSlicer-Ratios: 1:1, 1:3, 3:1, 1:1:1) für Zielfarbe
-function bestMix(targetHex, slots) {
+// ColorMix-Kandidaten (PrusaSlicer-Ratios: 1:1, 1:3, 3:1, 1:1:1) für Zielfarbe,
+// sortiert nach ΔE und dedupliziert nach Vorhersagefarbe
+function topMixes(targetHex, slots, n = 6) {
   // slots: [{slot:number(1-based), color}]
-  let best = null;
+  const seen = new Map(); // predictedHex → bester Kandidat mit dieser Farbe
   const consider = (comps) => {
     const hex = predictMix(comps);
     const d = deltaE(targetHex, hex);
-    if (!best || d < best.deltaE) best = { components: comps, predicted: hex, deltaE: d };
+    const prev = seen.get(hex);
+    if (!prev || d < prev.deltaE) seen.set(hex, { components: comps, predicted: hex, deltaE: d });
   };
   for (let i = 0; i < slots.length; i++)
     for (let j = i + 1; j < slots.length; j++) {
@@ -832,11 +855,14 @@ function bestMix(targetHex, slots) {
       for (let k = j + 1; k < slots.length; k++)
         consider([
           { slot: A.slot, color: A.color, ratio: 1 },
-          { slot: B.slot, color: slots[j].color, ratio: 1 },
+          { slot: B.slot, color: B.color, ratio: 1 },
           { slot: slots[k].slot, color: slots[k].color, ratio: 1 },
         ]);
     }
-  return best;
+  return [...seen.values()].sort((a, b) => a.deltaE - b.deltaE).slice(0, n);
+}
+function bestMix(targetHex, slots) {
+  return topMixes(targetHex, slots, 1)[0] || null;
 }
 
 // ---------- Prusa-3MF bauen ----------
@@ -959,7 +985,7 @@ function buildPrusa3MF(model, plan) {
   return { entries, mmVersion, maxState };
 }
 
-const PaintPortCore = { version: PAINTPORT_VERSION, unzipAll, zipAll, load3MF, buildPrusa3MF, remapPaintString, parsePaintTree, emitPaintTree, collectStates, deltaE, bestMix, predictMix, normalizeHex };
+const PaintPortCore = { version: PAINTPORT_VERSION, unzipAll, zipAll, load3MF, buildPrusa3MF, remapPaintString, parsePaintTree, emitPaintTree, collectStates, deltaE, bestMix, topMixes, predictMix, normalizeHex, parseTransform, applyTransform, hexToRgb };
 if (typeof globalThis !== "undefined") globalThis.PaintPortCore = PaintPortCore;
 /*CORE-END*/
 </script>
@@ -980,7 +1006,12 @@ const I18N = {
     "step.analyse": "1 · Analyse",
     "step.slots": "2 · INDX-Spulen (physische Toolheads)",
     "step.map": "3 · Zuordnung Modellfarben → INDX",
-    "step.export": "4 · Export",
+    "step.export": "5 · Export",
+    "preview.title": "4 · Vorschau",
+    "preview.original": "Original (Datei)",
+    "preview.result": "Ergebnis (INDX)",
+    "preview.hint": "Farbeindruck: dominanter Paint-State pro Dreieck; Negativ-/Modifier-Volumes sind ausgeblendet. Ziehen = drehen · Rad = zoomen · Shift/Rechtsklick-Ziehen = verschieben.",
+    "preview.building": "Baue 3D-Vorschau …",
     "slots.printerN": "Drucker-Extruderzahl:",
     "slots.printerHint": "Core One INDX 8T = 8. Virtuelle ColorMix-Extruder bekommen IDs oberhalb dieser Zahl.",
     "slots.presets": "Presets:",
@@ -993,6 +1024,10 @@ const I18N = {
     "map.autoBtn": "Auto-Zuordnung (Farbabstand)",
     "map.optSlot": "Slot {s} ({color})",
     "map.optMix": "ColorMix (virtuell, auto)",
+    "map.optMixCand": "ColorMix-Alternative {i}: {hex} · ΔE {d} ({comps})",
+    "map.collision": "⚠ ≈ Filament {n}",
+    "map.collisionTip": "Ergebnis fast identisch mit Filament {n} — im Druck nicht unterscheidbar. Anderen Mix-Kandidaten oder Slot wählen.",
+    "map.slotTip": "Tipp: {list} hat/haben keinen guten Mix (ΔE > 40). {free} INDX-Slot(s) sind frei — eine passende echte Spule schlägt jede Mischung.",
     "map.slotDisabled": "Slot deaktiviert!",
     "map.physical": "physisch, ΔE {d}",
     "map.noMix": "keine Mischung möglich",
@@ -1058,7 +1093,12 @@ const I18N = {
     "step.analyse": "1 · Analysis",
     "step.slots": "2 · INDX spools (physical toolheads)",
     "step.map": "3 · Map model colors → INDX",
-    "step.export": "4 · Export",
+    "step.export": "5 · Export",
+    "preview.title": "4 · Preview",
+    "preview.original": "Original (file)",
+    "preview.result": "Result (INDX)",
+    "preview.hint": "Color impression: dominant paint state per triangle; negative/modifier volumes are hidden. Drag = rotate · wheel = zoom · shift/right-drag = pan.",
+    "preview.building": "Building 3D preview …",
     "slots.printerN": "Printer extruder count:",
     "slots.printerHint": "Core One INDX 8T = 8. Virtual ColorMix extruders get IDs above this number.",
     "slots.presets": "Presets:",
@@ -1071,6 +1111,10 @@ const I18N = {
     "map.autoBtn": "Auto-map (color distance)",
     "map.optSlot": "Slot {s} ({color})",
     "map.optMix": "ColorMix (virtual, auto)",
+    "map.optMixCand": "ColorMix alternative {i}: {hex} · ΔE {d} ({comps})",
+    "map.collision": "⚠ ≈ filament {n}",
+    "map.collisionTip": "Result almost identical to filament {n} — indistinguishable in the print. Pick another mix candidate or slot.",
+    "map.slotTip": "Tip: {list} has/have no good mix (ΔE > 40). {free} INDX slot(s) are free — a real matching spool beats any blend.",
     "map.slotDisabled": "Slot disabled!",
     "map.physical": "physical, ΔE {d}",
     "map.noMix": "no blend possible",
@@ -1158,6 +1202,7 @@ let THEME = store.get("paintport_theme") === "dark" ? "dark" : "light";
 function applyTheme() {
   document.body.classList.toggle("dark", THEME === "dark");
   $("themeBtn").textContent = THEME === "dark" ? "☀" : "☾";
+  if (typeof pvDraw === "function" && typeof PV !== "undefined" && PV) pvDraw();
 }
 function toggleTheme() { THEME = THEME === "dark" ? "light" : "dark"; store.set("paintport_theme", THEME); applyTheme(); }
 
@@ -1197,7 +1242,10 @@ async function handleFile(file) {
     renderAnalyse();
     renderSlots();
     renderMapping();
-    ["cardAnalyse", "cardSlots", "cardMap", "cardExport"].forEach((id) => $(id).classList.remove("hidden"));
+    ["cardAnalyse", "cardSlots", "cardMap", "cardPreview", "cardExport"].forEach((id) => $(id).classList.remove("hidden"));
+    const loadedMsg = $("status").textContent;
+    setStatus(t("preview.building"));
+    setTimeout(() => { buildPreview(); setStatus(loadedMsg, "ok"); }, 30);
   } catch (err) {
     console.error(err);
     setStatus(t("status.error", { msg: errMsg(err) }), "err");
@@ -1272,6 +1320,42 @@ function activeSlots() {
   return out;
 }
 
+// Textfarbe mit Kontrast zur Hintergrundfarbe (Luminanz-Schwelle)
+function contrastText(hex) {
+  const [r, g, b] = PaintPortCore.hexToRgb(hex);
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) > 0.45 ? "#1c1c1c" : "#ffffff";
+}
+function optStyle(hex) { return `style="background:${hex};color:${contrastText(hex)}"`; }
+
+// Option-Value "mix:3x1+4x3" → Komponenten mit AKTUELLEN Slot-Farben (null, wenn ein Slot deaktiviert ist)
+function parseMixValue(v, slots) {
+  const comps = [];
+  for (const part of v.slice(4).split("+")) {
+    const [slot, ratio] = part.split("x").map(Number);
+    const s = slots.find((x) => x.slot === slot);
+    if (!s || !(ratio > 0)) return null;
+    comps.push({ slot, color: s.color, ratio });
+  }
+  return comps.length >= 2 ? comps : null;
+}
+// Aufgelöstes Ziel eines Mapping-Selects: physischer Slot, gepinnter Mix oder Auto-Mix
+function resolveTarget(sel, f, slots) {
+  const v = sel.value;
+  if (v.startsWith("p")) {
+    const slot = +v.slice(1);
+    const s = slots.find((x) => x.slot === slot);
+    return s ? { kind: "physical", slot, color: s.color } : { kind: "none" };
+  }
+  if (v.startsWith("mix:")) {
+    const comps = parseMixValue(v, slots);
+    if (!comps) return { kind: "none" };
+    const predicted = PaintPortCore.predictMix(comps);
+    return { kind: "mix", color: predicted, mix: { components: comps, predicted, deltaE: PaintPortCore.deltaE(f.color, predicted) } };
+  }
+  const mix = slots.length >= 2 ? PaintPortCore.bestMix(f.color, slots) : null;
+  return mix ? { kind: "mix", color: mix.predicted, mix } : { kind: "none" };
+}
+
 function renderMapping() {
   if (!MODEL) return;
   const tb = $("mapTable").querySelector("tbody");
@@ -1284,15 +1368,26 @@ function renderMapping() {
     const relevant = f.paintedTris > 0 || f.baseTris > 0 || f.isDefaultOf > 0;
     const tr = document.createElement("tr");
     if (!relevant) tr.style.opacity = ".45";
-    const opts = slots.map((s) => `<option value="p${s.slot}">${t("map.optSlot", { s: s.slot, color: s.color })}</option>`).join("")
-      + ($("allowMix").checked ? `<option value="mix">${t("map.optMix")}</option>` : "");
+    const allowMix = $("allowMix").checked && slots.length >= 2;
+    const cands = allowMix ? PaintPortCore.topMixes(f.color, slots, 6) : [];
+    const opts = slots.map((s) => `<option value="p${s.slot}" ${optStyle(s.color)}>${t("map.optSlot", { s: s.slot, color: s.color })}</option>`).join("")
+      + (allowMix && cands[0] ? `<option value="mix" ${optStyle(cands[0].predicted)}>${t("map.optMix")}</option>` : "")
+      + cands.map((m, ci) => {
+        const val = "mix:" + m.components.map((c) => c.slot + "x" + c.ratio).join("+");
+        const comps = m.components.map((c) => `${c.ratio}×S${c.slot}`).join("+");
+        return `<option value="${val}" ${optStyle(m.predicted)}>${t("map.optMixCand", { i: ci + 1, comps, hex: m.predicted, d: m.deltaE.toFixed(1) })}</option>`;
+      }).join("");
     tr.innerHTML = `<td><span class="sw" style="background:${f.color}"></span>Filament ${f.index} · ${f.color}</td>
       <td>${pct.toFixed(1)} %</td>
       <td><select data-fil="${f.index}" onchange="updateResults()">${opts}</select></td>
       <td class="mixinfo" id="res${f.index}">—</td>`;
     tb.appendChild(tr);
     const sel = tr.querySelector("select");
-    if (prev[f.index] && [...sel.options].some((o) => o.value === prev[f.index])) sel.value = prev[f.index];
+    if (prev[f.index]) {
+      if ([...sel.options].some((o) => o.value === prev[f.index])) sel.value = prev[f.index];
+      // gepinnter Mix referenziert einen inzwischen deaktivierten Slot → zurück auf Auto
+      else if (prev[f.index].startsWith("mix") && allowMix) sel.value = "mix";
+    }
   }
   updateResults();
 }
@@ -1325,22 +1420,48 @@ function autoMap() {
 
 function updateResults() {
   const slots = activeSlots();
+  const rows = [];
   document.querySelectorAll("#mapTable select").forEach((sel) => {
     const f = MODEL.filaments.find((x) => x.index === +sel.dataset.fil);
+    const target = resolveTarget(sel, f, slots);
+    rows.push({ f, sel, target });
+    // geschlossenes Select zeigt die Zielfarbe (funktioniert in allen Browsern)
+    sel.style.background = target.kind === "none" ? "" : target.color;
+    sel.style.color = target.kind === "none" ? "" : contrastText(target.color);
     const res = $("res" + f.index);
-    if (sel.value.startsWith("p")) {
-      const slot = +sel.value.slice(1);
-      const s = slots.find((x) => x.slot === slot);
-      if (!s) { res.textContent = t("map.slotDisabled"); return; }
-      const d = PaintPortCore.deltaE(f.color, s.color);
-      res.innerHTML = `<span class="sw" style="background:${s.color}"></span>${t("map.physical", { d: d.toFixed(1) })}`;
-    } else {
-      const mix = PaintPortCore.bestMix(f.color, slots);
-      if (!mix) { res.textContent = t("map.noMix"); return; }
+    if (target.kind === "physical") {
+      const d = PaintPortCore.deltaE(f.color, target.color);
+      res.innerHTML = `<span class="sw" style="background:${target.color}"></span>${t("map.physical", { d: d.toFixed(1) })}`;
+    } else if (target.kind === "mix") {
+      const mix = target.mix;
       const comps = mix.components.map((c) => `${c.ratio}× Slot ${c.slot}`).join(" + ");
       res.innerHTML = `<span class="sw" style="background:${mix.predicted}"></span>${t("map.mixDetail", { comps, hex: mix.predicted, d: mix.deltaE.toFixed(1) })}`;
+    } else {
+      res.textContent = sel.value.startsWith("p") ? t("map.slotDisabled") : t("map.noMix");
     }
   });
+  // Kollisionswarnung: verschiedene Quellfarben, die auf (fast) dieselbe Ergebnisfarbe laufen
+  const relevant = rows.filter((r) => (r.f.paintedTris > 0 || r.f.baseTris > 0 || r.f.isDefaultOf > 0) && r.target.kind !== "none");
+  for (let i = 0; i < relevant.length; i++)
+    for (let j = i + 1; j < relevant.length; j++) {
+      const a = relevant[i], b = relevant[j];
+      if (PaintPortCore.deltaE(a.f.color, b.f.color) > 15 && PaintPortCore.deltaE(a.target.color, b.target.color) < 10) {
+        for (const [x, other] of [[a, b.f.index], [b, a.f.index]]) {
+          $("res" + x.f.index).innerHTML += ` <span class="badge warn" title="${t("map.collisionTip", { n: other })}">${t("map.collision", { n: other })}</span>`;
+        }
+      }
+    }
+  // Slot-Tipp: schlechte Mixe + freie Drucker-Slots → echte Spule schlägt jede Mischung
+  const tip = $("mapTip");
+  const free = printerCount() - slots.length;
+  const poor = relevant.filter((r) => r.target.kind === "mix" && r.target.mix.deltaE > 40);
+  if (free > 0 && poor.length) {
+    tip.textContent = t("map.slotTip", { list: poor.map((r) => `Filament ${r.f.index} (${r.f.color})`).join(", "), free });
+    tip.classList.remove("hidden");
+  } else {
+    tip.classList.add("hidden");
+  }
+  if (typeof schedulePreviewRecolor === "function") schedulePreviewRecolor();
 }
 
 async function doExport() {
@@ -1361,12 +1482,12 @@ async function doExport() {
     const virtualByKey = new Map();
     document.querySelectorAll("#mapTable select").forEach((sel) => {
       const src = +sel.dataset.fil;
-      if (sel.value.startsWith("p")) {
-        stateMap.set(src, +sel.value.slice(1));
-      } else {
-        const f = MODEL.filaments.find((x) => x.index === src);
-        const mix = PaintPortCore.bestMix(f.color, slots);
-        if (!mix) return;
+      const f = MODEL.filaments.find((x) => x.index === src);
+      const target = resolveTarget(sel, f, slots);
+      if (target.kind === "physical") {
+        stateMap.set(src, target.slot);
+      } else if (target.kind === "mix") {
+        const mix = target.mix;
         const key = mix.components.map((c) => c.slot + ":" + c.ratio).join("|");
         if (!virtualByKey.has(key)) {
           const id = P + virtuals.length + 1;
@@ -1412,6 +1533,241 @@ async function doExport() {
   } finally {
     $("btnExport").disabled = false;
   }
+}
+
+// ============================================================
+// 3D-Vorschau — Vanilla WebGL2 (bewusst ohne Three.js: Single-File, offline, kein Build)
+// ============================================================
+let PV = null;            // {gl, prog, uMVP, uMV, bufPos, bufCol, nTris, state, baseExt, colOrig, colResult, orbit}
+let PV_MODE = "result";
+let pvRecolorTimer = 0;
+
+function schedulePreviewRecolor() {
+  if (!PV) return;
+  clearTimeout(pvRecolorTimer);
+  pvRecolorTimer = setTimeout(() => { if (PV_MODE === "result") { pvFillResultColors(); pvUploadColors(); pvDraw(); } }, 100);
+}
+
+// --- kleine mat4-Helfer (column-major, WebGL-Konvention) ---
+function m4Perspective(fovY, aspect, near, far) {
+  const f = 1 / Math.tan(fovY / 2), nf = 1 / (near - far);
+  return new Float32Array([f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) * nf, -1, 0, 0, 2 * far * near * nf, 0]);
+}
+function m4LookAt(eye, target, up) {
+  const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+  const norm = (v) => { const l = Math.hypot(...v) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const z = norm(sub(eye, target)), x = norm(cross(up, z)), y = cross(z, x);
+  return new Float32Array([
+    x[0], y[0], z[0], 0, x[1], y[1], z[1], 0, x[2], y[2], z[2], 0,
+    -(x[0] * eye[0] + x[1] * eye[1] + x[2] * eye[2]),
+    -(y[0] * eye[0] + y[1] * eye[1] + y[2] * eye[2]),
+    -(z[0] * eye[0] + z[1] * eye[1] + z[2] * eye[2]), 1,
+  ]);
+}
+function m4Mul(a, b) { // a*b
+  const r = new Float32Array(16);
+  for (let c = 0; c < 4; c++) for (let ro = 0; ro < 4; ro++)
+    r[c * 4 + ro] = a[ro] * b[c * 4] + a[4 + ro] * b[c * 4 + 1] + a[8 + ro] * b[c * 4 + 2] + a[12 + ro] * b[c * 4 + 3];
+  return r;
+}
+
+function pvInitGL(canvas) {
+  const gl = canvas.getContext("webgl2", { antialias: true });
+  if (!gl) return null;
+  const compile = (type, src) => {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src); gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error("Shader: " + gl.getShaderInfoLog(sh));
+    return sh;
+  };
+  const vs = compile(gl.VERTEX_SHADER, `#version 300 es
+layout(location=0) in vec3 aPos; layout(location=1) in vec3 aCol;
+uniform mat4 uMVP, uMV;
+out vec3 vCol; out vec3 vPos;
+void main(){ vCol=aCol; vPos=(uMV*vec4(aPos,1.0)).xyz; gl_Position=uMVP*vec4(aPos,1.0); }`);
+  const fs = compile(gl.FRAGMENT_SHADER, `#version 300 es
+precision highp float;
+in vec3 vCol; in vec3 vPos; out vec4 o;
+void main(){
+  vec3 n = normalize(cross(dFdx(vPos), dFdy(vPos)));
+  float l = 0.35 + 0.65 * abs(n.z); // Headlight, windungs-agnostisch
+  o = vec4(vCol * l, 1.0);
+}`);
+  const prog = gl.createProgram();
+  gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error("Link: " + gl.getProgramInfoLog(prog));
+  return { gl, prog, uMVP: gl.getUniformLocation(prog, "uMVP"), uMV: gl.getUniformLocation(prog, "uMV") };
+}
+
+// Farbtabelle: Filament-Index → [r,g,b] 0-255 (Index 0 = Grau für "kein Mapping")
+function pvColorTable(mapFn) {
+  const lut = [[128, 128, 128]];
+  for (const f of MODEL.filaments) {
+    const hex = mapFn(f) || f.color;
+    lut.push(PaintPortCore.hexToRgb(hex).map((v) => Math.round(v * 255)));
+  }
+  return lut;
+}
+function pvFillColors(dst, lut) {
+  const { state, baseExt, nTris } = PV;
+  for (let i = 0; i < nTris; i++) {
+    const s = state[i] > 0 ? state[i] : baseExt[i];
+    const c = lut[s] || lut[0];
+    const o = i * 9;
+    for (let v = 0; v < 3; v++) { dst[o + v * 3] = c[0]; dst[o + v * 3 + 1] = c[1]; dst[o + v * 3 + 2] = c[2]; }
+  }
+}
+function pvFillOrigColors() { pvFillColors(PV.colOrig, pvColorTable((f) => f.color)); }
+function pvFillResultColors() {
+  const slots = activeSlots();
+  const byIndex = new Map();
+  document.querySelectorAll("#mapTable select").forEach((sel) => {
+    const f = MODEL.filaments.find((x) => x.index === +sel.dataset.fil);
+    const tgt = resolveTarget(sel, f, slots);
+    byIndex.set(f.index, tgt.kind === "none" ? null : tgt.color);
+  });
+  pvFillColors(PV.colResult, pvColorTable((f) => byIndex.get(f.index)));
+}
+function pvUploadColors() {
+  const { gl, bufCol } = PV;
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufCol);
+  gl.bufferData(gl.ARRAY_BUFFER, PV_MODE === "original" ? PV.colOrig : PV.colResult, gl.STATIC_DRAW);
+}
+
+function buildPreview() {
+  const canvas = $("pvCanvas");
+  try {
+    const ctx = PV ? { gl: PV.gl, prog: PV.prog, uMVP: PV.uMVP, uMV: PV.uMV } : pvInitGL(canvas);
+    if (!ctx) { $("cardPreview").classList.add("hidden"); return; }
+    const { gl } = ctx;
+    // sichtbare Dreiecke = ModelPart-Ranges (== totalTris), Item-Transforms einbacken
+    const nTris = MODEL.totalTris;
+    const pos = new Float32Array(nTris * 9);
+    const state = new Int16Array(nTris), baseExt = new Int16Array(nTris);
+    const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+    let w = 0;
+    for (const o of MODEL.objects) {
+      const T = PaintPortCore.parseTransform(o.transform);
+      for (const pr of o.parts) {
+        if (pr.type !== "ModelPart") continue;
+        for (let i = pr.firstTri; i < pr.firstTri + pr.triCount; i++) {
+          for (let v = 0; v < 3; v++) {
+            const vi = o.tris[i * 3 + v] * 3;
+            const p = PaintPortCore.applyTransform(T, o.vertices[vi], o.vertices[vi + 1], o.vertices[vi + 2]);
+            const wo = w * 9 + v * 3;
+            pos[wo] = p[0]; pos[wo + 1] = p[1]; pos[wo + 2] = p[2];
+            for (let a = 0; a < 3; a++) { if (p[a] < min[a]) min[a] = p[a]; if (p[a] > max[a]) max[a] = p[a]; }
+          }
+          state[w] = o.triState[i]; baseExt[w] = pr.extruder; w++;
+        }
+      }
+    }
+    const center = [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2];
+    const radius = Math.max(1, Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]) / 2);
+    const bufPos = PV ? PV.bufPos : gl.createBuffer();
+    const bufCol = PV ? PV.bufCol : gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, bufPos);
+    gl.bufferData(gl.ARRAY_BUFFER, pos, gl.STATIC_DRAW);
+    PV = { ...ctx, bufPos, bufCol, nTris, state, baseExt,
+      colOrig: new Uint8Array(nTris * 9), colResult: new Uint8Array(nTris * 9),
+      center, radius, orbit: { lon: 0.6, lat: 0.9, dist: radius * 3.2, target: center.slice() } };
+    pvFillOrigColors();
+    pvFillResultColors();
+    pvUploadColors();
+    if (!canvas.dataset.pvEvents) { pvBindEvents(canvas); canvas.dataset.pvEvents = "1"; }
+    pvSetModeButtons();
+    pvDraw();
+  } catch (err) {
+    console.error(err);
+    PV = null;
+    $("cardPreview").classList.add("hidden");
+  }
+}
+
+function pvDraw() {
+  if (!PV) return;
+  const { gl, prog, uMVP, uMV, bufPos, bufCol, nTris, orbit } = PV;
+  const canvas = gl.canvas;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const cw = Math.max(1, Math.round((canvas.clientWidth || 640) * dpr));
+  const ch = Math.max(1, Math.round((canvas.clientHeight || 440) * dpr));
+  if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
+  gl.viewport(0, 0, cw, ch);
+  const bg = getComputedStyle(document.body).getPropertyValue("--soft").trim();
+  const bgRgb = /^#/.test(bg) ? PaintPortCore.hexToRgb(bg) : [0.93, 0.92, 0.89];
+  gl.clearColor(bgRgb[0], bgRgb[1], bgRgb[2], 1);
+  gl.enable(gl.DEPTH_TEST);
+  gl.disable(gl.CULL_FACE);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  // Kamera: Z-up-Orbit um target
+  const cl = Math.max(0.05, Math.min(Math.PI - 0.05, orbit.lat));
+  const eye = [
+    orbit.target[0] + orbit.dist * Math.sin(cl) * Math.cos(orbit.lon),
+    orbit.target[1] + orbit.dist * Math.sin(cl) * Math.sin(orbit.lon),
+    orbit.target[2] + orbit.dist * Math.cos(cl),
+  ];
+  const view = m4LookAt(eye, orbit.target, [0, 0, 1]);
+  const proj = m4Perspective(0.8, cw / ch, orbit.dist / 100, orbit.dist * 10 + PV.radius * 10);
+  const mvp = m4Mul(proj, view);
+  gl.useProgram(prog);
+  gl.uniformMatrix4fv(uMVP, false, mvp);
+  gl.uniformMatrix4fv(uMV, false, view);
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufPos);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, bufCol);
+  gl.enableVertexAttribArray(1);
+  gl.vertexAttribPointer(1, 3, gl.UNSIGNED_BYTE, true, 0, 0);
+  gl.drawArrays(gl.TRIANGLES, 0, nTris * 3);
+}
+
+function pvBindEvents(canvas) {
+  let drag = null; // {mode:"rotate"|"pan", x, y}
+  canvas.addEventListener("pointerdown", (e) => {
+    drag = { mode: e.button === 2 || e.shiftKey ? "pan" : "rotate", x: e.clientX, y: e.clientY };
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!drag || !PV) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    drag.x = e.clientX; drag.y = e.clientY;
+    const o = PV.orbit;
+    if (drag.mode === "rotate") {
+      o.lon -= dx * 0.008; o.lat -= dy * 0.008;
+      o.lat = Math.max(0.05, Math.min(Math.PI - 0.05, o.lat));
+    } else {
+      // Pan in Kamera-Ebene (rechts/oben aus lon/lat abgeleitet, Z-up)
+      const s = o.dist * 0.0012;
+      const right = [-Math.sin(o.lon), Math.cos(o.lon), 0];
+      const cl = Math.max(0.05, Math.min(Math.PI - 0.05, o.lat));
+      const up = [-Math.cos(cl) * Math.cos(o.lon), -Math.cos(cl) * Math.sin(o.lon), Math.sin(cl)];
+      for (let a = 0; a < 3; a++) o.target[a] += (-dx * right[a] + dy * up[a]) * s;
+    }
+    pvDraw();
+  });
+  canvas.addEventListener("pointerup", () => { drag = null; });
+  canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+  canvas.addEventListener("wheel", (e) => {
+    if (!PV) return;
+    e.preventDefault();
+    PV.orbit.dist = Math.max(PV.radius * 0.2, Math.min(PV.radius * 20, PV.orbit.dist * Math.exp(e.deltaY * 0.0012)));
+    pvDraw();
+  }, { passive: false });
+  new ResizeObserver(() => { if (PV) pvDraw(); }).observe(canvas);
+}
+
+function pvSetModeButtons() {
+  $("pvBtnOriginal").classList.toggle("pv-on", PV_MODE === "original");
+  $("pvBtnResult").classList.toggle("pv-on", PV_MODE === "result");
+}
+function setPreviewMode(mode) {
+  PV_MODE = mode;
+  pvSetModeButtons();
+  if (!PV) return;
+  if (mode === "result") pvFillResultColors();
+  pvUploadColors();
+  pvDraw();
 }
 
 renderPresetButtons();
