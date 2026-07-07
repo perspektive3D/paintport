@@ -14,7 +14,9 @@ const bytes = new Uint8Array(readFileSync(input));
 const model = await FW.load3MF(bytes);
 
 console.log("Objekte:", model.objects.map(o => `${o.name} (Basis-Ext ${o.defaultExtruder}, ${o.tris.length / 3} Tris)`).join(" | "));
-console.log("Filamente:", model.filaments.map(f => `${f.index}:${f.color} painted=${f.paintedTris}`).join("  "));
+console.log("Filamente:", model.filaments.map(f => `${f.index}:${f.color} painted=${f.paintedTris} base=${f.baseTris}`).join("  "));
+console.log("Part-Ranges:", model.objects.map(o => o.parts.map(p => `${p.firstTri}+${p.triCount}→Ext${p.extruder}${p.type !== "ModelPart" ? "(" + p.type + ")" : ""}`).join(" ")).join(" | "));
+if (model.specialVolumes) console.log("Spezial-Volumes (negativ/modifier/support):", model.specialVolumes);
 console.log("Unbemalt:", model.unpainted, "/ Gesamt:", model.totalTris, "· benutzte Extruder-States:", model.usedExtruders.join(","));
 
 // Selbsttest: Painting-Strings roundtrippen (parse→emit muss Original ergeben)

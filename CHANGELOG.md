@@ -2,6 +2,26 @@
 
 All notable changes to PaintPort. Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [0.5.0] — 2026-07-07
+
+### Fixed
+- **Per-part filament assignments are now respected** (part-level `extruder` in Bambu's
+  `model_settings.config`): multi-part objects — e.g. MakerWorld models whose mouth/eye
+  parts use a different base filament than the object — no longer export with the object's
+  base filament everywhere. The export writes one volume range per base-filament change.
+- **Negative modifiers survive the conversion**: Bambu `negative_part` volumes (e.g.
+  alignment-pin cutouts) are exported as PrusaSlicer `NegativeVolume`s with their original
+  names instead of being merged as solid geometry — thanks to community tester feedback on
+  the 8-color Majora's Mask. `modifier_part`, `support_blocker` and `support_enforcer`
+  map to their PrusaSlicer volume types as well. Verified via PrusaSlicer CLI round-trip.
+- Negative/modifier volumes no longer distort the painting statistics (they are not a
+  printable surface).
+
+### Added
+- Analysis table shows a **"Base (unpainted)" column** per filament — base-colored areas
+  (e.g. a black body that is never "painted") no longer read as a misleading 0 %.
+- Analysis hint shows how many negative/modifier volumes were preserved.
+
 ## [0.4.1] — 2026-07-06
 
 ### Added

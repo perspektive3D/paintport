@@ -275,7 +275,7 @@ Es wird kein Code dieser Projekte ausgeliefert; Formate wurden zur Interoperabil
 // ============================================================
 "use strict";
 
-const PAINTPORT_VERSION = "0.4.1"; // einzige Versions-Quelle (UI-Badge + Generator-Metadata)
+const PAINTPORT_VERSION = "0.5.0"; // einzige Versions-Quelle (UI-Badge + Generator-Metadata)
 
 // Core-Fehler: englische Message + stabiler err.code (UI übersetzt via I18N "err.<code>")
 const CORE_ERRORS = {
@@ -596,6 +596,14 @@ function composeTransform(a, b) {
 }
 
 // ---------- 3MF laden (Bambu / Orca / Prusa) ----------
+// Bambu part-subtype → PrusaSlicer volume_type (Strings = ModelVolume::type_to_string)
+const VOLUME_TYPES = {
+  normal_part: "ModelPart",
+  negative_part: "NegativeVolume",
+  modifier_part: "ParameterModifier",
+  support_blocker: "SupportBlocker",
+  support_enforcer: "SupportEnforcer",
+};
 async function load3MF(bytes) {
   const files = await unzipAll(bytes);
   const td = new TextDecoder();
@@ -626,13 +634,27 @@ async function load3MF(bytes) {
     while ((om = oRe.exec(ms)) !== null) {
       const idM = /id="(\d+)"/.exec(om[1]);
       if (!idM) continue;
-      const meta = { name: null, extruder: 1 };
+      const meta = { name: null, extruder: 1, parts: new Map() };
       const kvRe = /<metadata\s+key="([^"]+)"\s+value="([^"]*)"/g;
       let kv;
       const head = om[2].split("<part")[0]; // nur Objekt-Ebene, Parts separat
       while ((kv = kvRe.exec(head)) !== null) {
         if (kv[1] === "name") meta.name = kv[2];
         if (kv[1] === "extruder") meta.extruder = Math.max(1, parseInt(kv[2], 10) || 1);
+      }
+      // Part-Ebene: extruder-Override, subtype, Name (Part-id == Component-objectid der Referenzdatei)
+      const pRe = /<part\b([^>]*)>([\s\S]*?)<\/part>/g;
+      let pp;
+      while ((pp = pRe.exec(om[2])) !== null) {
+        const pa = parseAttrs(pp[1]);
+        if (!pa.id) continue;
+        const pe = /<metadata\s+key="extruder"\s+value="([^"]*)"/.exec(pp[2]);
+        const pn = /<metadata\s+key="name"\s+value="([^"]*)"/.exec(pp[2]);
+        meta.parts.set(pa.id, {
+          extruder: pe ? Math.max(1, parseInt(pe[1], 10) || 1) : null,
+          type: VOLUME_TYPES[pa.subtype] || "ModelPart",
+          name: pn ? pn[1] : null,
+        });
       }
       objMeta.set(idM[1], meta);
     }
@@ -655,19 +677,22 @@ async function load3MF(bytes) {
   for (const item of main.buildItems) {
     const mo = main.objects.get(item.objectid);
     if (!mo) continue;
-    const meta = objMeta.get(item.objectid) || { name: null, extruder: 1 };
+    const meta = objMeta.get(item.objectid) || { name: null, extruder: 1, parts: new Map() };
     const parts = [];
     if (mo.hasMesh) {
-      parts.push({ obj: mo, transform: null });
+      parts.push({ obj: mo, transform: null, extruder: meta.extruder, type: "ModelPart", partName: null });
     }
     for (const comp of mo.components) {
       const src = comp.path ? getExternal(comp.path).objects.get(comp.objectid) : main.objects.get(comp.objectid);
       if (!src) continue;
       const ct = parseTransform(comp.transform);
-      if (src.hasMesh) parts.push({ obj: src, transform: ct });
+      const pm = meta.parts.get(comp.objectid);
+      const pExt = (pm && pm.extruder) || meta.extruder;
+      if (src.hasMesh) parts.push({ obj: src, transform: ct, extruder: pExt, type: (pm && pm.type) || "ModelPart", partName: pm ? pm.name : null });
       else for (const c2 of src.components) {  // eine Ebene tiefer (Bambu assembliert teils doppelt)
         const src2 = c2.path ? getExternal(c2.path).objects.get(c2.objectid) : (comp.path ? getExternal(comp.path).objects.get(c2.objectid) : main.objects.get(c2.objectid));
-        if (src2 && src2.hasMesh) parts.push({ obj: src2, transform: composeTransform(ct, parseTransform(c2.transform)) });
+        const pm2 = meta.parts.get(c2.objectid) || pm;
+        if (src2 && src2.hasMesh) parts.push({ obj: src2, transform: composeTransform(ct, parseTransform(c2.transform)), extruder: (pm2 && pm2.extruder) || pExt, type: (pm2 && pm2.type) || "ModelPart", partName: pm2 ? pm2.name : null });
       }
     }
     if (!parts.length) continue;
@@ -677,6 +702,7 @@ async function load3MF(bytes) {
     const vertices = new Float64Array(vCount * 3);
     const tris = new Int32Array(tCount * 3);
     const paints = new Array(tCount);
+    const partRanges = []; // Dreiecks-Ranges je Part inkl. effektivem Basis-Extruder
     let vo = 0, to = 0;
     for (const p of parts) {
       const src = p.obj;
@@ -692,32 +718,43 @@ async function load3MF(bytes) {
         tris[(to + i) * 3 + 2] = src.tris[i * 3 + 2] + vo;
         paints[to + i] = src.paints[i];
       }
+      partRanges.push({ firstTri: to, triCount: tn, extruder: p.extruder, type: p.type || "ModelPart", name: p.partName || null });
       vo += n; to += tn;
     }
     outObjects.push({
       name: meta.name || mo.name || ("Objekt " + item.objectid),
       defaultExtruder: meta.extruder,
       transform: item.transform || null,
-      vertices, tris, paints,
+      vertices, tris, paints, parts: partRanges,
     });
   }
   if (!outObjects.length) throw coreError("ERR_NO_OBJECTS");
 
-  // Painting-Statistik
+  // Painting-Statistik — nur ModelPart-Ranges; Negativ-/Modifier-Volumes sind keine
+  // Druckoberfläche und dürfen weder Basis- noch Unbemalt-Zahlen verfälschen
   const stateCount = new Map();
-  let unpainted = 0, totalTris = 0;
+  const baseCount = new Map(); // Basis-Extruder → unbemalte Dreiecke seiner Parts
+  let unpainted = 0, totalTris = 0, specialVolumes = 0;
   for (const o of outObjects) {
-    totalTris += o.paints.length;
-    for (const p of o.paints) {
-      if (!p) { unpainted++; continue; }
-      collectStates(p, stateCount);
+    for (const pr of o.parts) {
+      if (pr.type !== "ModelPart") { specialVolumes++; continue; }
+      totalTris += pr.triCount;
+      let base = 0;
+      for (let i = pr.firstTri; i < pr.firstTri + pr.triCount; i++) {
+        const p = o.paints[i];
+        if (!p) { unpainted++; base++; continue; }
+        collectStates(p, stateCount);
+      }
+      if (base) baseCount.set(pr.extruder, (baseCount.get(pr.extruder) || 0) + base);
     }
   }
   stateCount.delete(0);
   const maxState = Math.max(0, ...stateCount.keys());
   const usedExtruders = [...stateCount.keys()].sort((a, b) => a - b);
   const filaments = [];
-  const nFil = Math.max(filamentColors ? filamentColors.length : 0, maxState, ...outObjects.map((o) => o.defaultExtruder));
+  const nFil = Math.max(filamentColors ? filamentColors.length : 0, maxState,
+    ...outObjects.map((o) => o.defaultExtruder),
+    ...outObjects.flatMap((o) => o.parts.filter((p) => p.type === "ModelPart").map((p) => p.extruder)));
   const FALLBACK = ["#26A69A", "#EF5350", "#FFCA28", "#5C6BC0", "#8D6E63", "#66BB6A", "#EC407A", "#78909C"];
   for (let i = 1; i <= nFil; i++) {
     filaments.push({
@@ -725,10 +762,11 @@ async function load3MF(bytes) {
       color: (filamentColors && filamentColors[i - 1]) || FALLBACK[(i - 1) % FALLBACK.length],
       colorKnown: !!(filamentColors && filamentColors[i - 1]),
       paintedTris: stateCount.get(i) || 0,
+      baseTris: baseCount.get(i) || 0,
       isDefaultOf: outObjects.filter((o) => o.defaultExtruder === i).length,
     });
   }
-  return { objects: outObjects, filaments, unpainted, totalTris, usedExtruders };
+  return { objects: outObjects, filaments, unpainted, totalTris, usedExtruders, specialVolumes };
 }
 
 function normalizeHex(c) {
@@ -850,8 +888,19 @@ function buildPrusa3MF(model, plan) {
       }
     }
     modelParts.push("    </triangles>\n   </mesh>\n  </object>\n");
-    const volExtruder = mapState(o.defaultExtruder);
-    configObjects.push({ id: objId, name: o.name, lastid: t.length / 3 - 1, extruder: volExtruder });
+    // Volume-Ranges je Part-Basis-Extruder; aufeinanderfolgende ModelParts mit gleichem
+    // Ziel-Extruder verschmelzen (ohne Part-Overrides ⇒ genau eine Range wie bisher).
+    // Negativ-/Modifier-/Support-Volumes bleiben einzeln und drucken nicht → kein Extruder.
+    const srcParts = (o.parts && o.parts.length) ? o.parts : [{ firstTri: 0, triCount: t.length / 3, extruder: o.defaultExtruder, type: "ModelPart" }];
+    const ranges = [];
+    for (const p of srcParts) {
+      const type = p.type || "ModelPart";
+      const ext = (type === "ModelPart" || type === "ParameterModifier") ? mapState(p.extruder) : 0;
+      const last = ranges[ranges.length - 1];
+      if (type === "ModelPart" && last && last.type === "ModelPart" && last.extruder === ext) last.lastid = p.firstTri + p.triCount - 1;
+      else ranges.push({ firstid: p.firstTri, lastid: p.firstTri + p.triCount - 1, extruder: ext, type, name: p.name || null });
+    }
+    configObjects.push({ id: objId, name: o.name, ranges });
   });
   modelParts.push(" </resources>\n <build>\n");
   model.objects.forEach((o, oi) => {
@@ -867,13 +916,16 @@ function buildPrusa3MF(model, plan) {
   for (const co of configObjects) {
     cfg.push(` <object id="${co.id}" instances_count="1">\n`);
     cfg.push(`  <metadata type="object" key="name" value="${xmlEscape(co.name)}"/>\n`);
-    cfg.push(`  <volume firstid="0" lastid="${co.lastid}">\n`);
-    cfg.push(`   <metadata type="volume" key="name" value="${xmlEscape(co.name)}"/>\n`);
-    cfg.push('   <metadata type="volume" key="volume_type" value="ModelPart"/>\n');
-    if (co.extruder > 0) cfg.push(`   <metadata type="volume" key="extruder" value="${co.extruder}"/>\n`);
-    cfg.push('   <metadata type="volume" key="matrix" value="1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"/>\n');
-    cfg.push('   <mesh edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/>\n');
-    cfg.push("  </volume>\n </object>\n");
+    for (const r of co.ranges) {
+      cfg.push(`  <volume firstid="${r.firstid}" lastid="${r.lastid}">\n`);
+      cfg.push(`   <metadata type="volume" key="name" value="${xmlEscape(r.type === "ModelPart" ? co.name : (r.name || co.name))}"/>\n`);
+      cfg.push(`   <metadata type="volume" key="volume_type" value="${r.type}"/>\n`);
+      if (r.extruder > 0) cfg.push(`   <metadata type="volume" key="extruder" value="${r.extruder}"/>\n`);
+      cfg.push('   <metadata type="volume" key="matrix" value="1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"/>\n');
+      cfg.push('   <mesh edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/>\n');
+      cfg.push("  </volume>\n");
+    }
+    cfg.push(" </object>\n");
   }
   cfg.push("</config>\n");
 
@@ -957,8 +1009,10 @@ const I18N = {
     "status.loaded": "Geladen: {objects} Objekt(e), {tris} Dreiecke, {fils} Filament(e).",
     "status.error": "Fehler: {msg}",
     "analyse.objectsLine": 'Objekte: {list} · Unbemalt (Basis): {n} Dreiecke',
+    "analyse.specialVolumes": "{n} Negativ-/Modifier-Volume(s) übernommen",
     "analyse.baseFilament": "Basis-Filament {n}",
     "analyse.colPainted": "Bemalt",
+    "analyse.colBase": "Basis (unbemalt)",
     "analyse.badgeBaseOf": "Basis von {n} Objekt(en)",
     "analyse.badgeColorUnknown": "Farbe unbekannt",
     "analyse.trisPct": "{n} Dreiecke ({pct} %)",
@@ -1033,8 +1087,10 @@ const I18N = {
     "status.loaded": "Loaded: {objects} object(s), {tris} triangles, {fils} filament(s).",
     "status.error": "Error: {msg}",
     "analyse.objectsLine": 'Objects: {list} · Unpainted (base): {n} triangles',
+    "analyse.specialVolumes": "{n} negative/modifier volume(s) preserved",
     "analyse.baseFilament": "base filament {n}",
     "analyse.colPainted": "Painted",
+    "analyse.colBase": "Base (unpainted)",
     "analyse.badgeBaseOf": "Base of {n} object(s)",
     "analyse.badgeColorUnknown": "color unknown",
     "analyse.trisPct": "{n} triangles ({pct} %)",
@@ -1151,14 +1207,17 @@ async function handleFile(file) {
 function renderAnalyse() {
   const rows = MODEL.filaments.map((f) => {
     const pct = MODEL.totalTris ? (100 * f.paintedTris / MODEL.totalTris) : 0;
+    const basePct = MODEL.totalTris ? (100 * (f.baseTris || 0) / MODEL.totalTris) : 0;
     const dflt = f.isDefaultOf ? ` <span class="badge">${t("analyse.badgeBaseOf", { n: f.isDefaultOf })}</span>` : "";
     const known = f.colorKnown ? "" : ` <span class="badge">${t("analyse.badgeColorUnknown")}</span>`;
     return `<tr><td><span class="sw" style="background:${f.color}"></span>Filament ${f.index} · ${f.color}${known}${dflt}</td>
-      <td>${t("analyse.trisPct", { n: fmtNum(f.paintedTris), pct: pct.toFixed(1) })}</td></tr>`;
+      <td>${t("analyse.trisPct", { n: fmtNum(f.paintedTris), pct: pct.toFixed(1) })}</td>
+      <td>${f.baseTris ? t("analyse.trisPct", { n: fmtNum(f.baseTris), pct: basePct.toFixed(1) }) : "—"}</td></tr>`;
   }).join("");
   const objs = MODEL.objects.map((o) => `${o.name} (${t("analyse.baseFilament", { n: o.defaultExtruder })})`).join(", ");
-  $("analyse").innerHTML = `<div class="hint" style="margin:0 0 10px">${t("analyse.objectsLine", { list: objs, n: fmtNum(MODEL.unpainted) })}</div>
-    <table><thead><tr><th>${t("map.colFilament")}</th><th>${t("analyse.colPainted")}</th></tr></thead><tbody>${rows}</tbody></table>`;
+  const spec = MODEL.specialVolumes ? " · " + t("analyse.specialVolumes", { n: MODEL.specialVolumes }) : "";
+  $("analyse").innerHTML = `<div class="hint" style="margin:0 0 10px">${t("analyse.objectsLine", { list: objs, n: fmtNum(MODEL.unpainted) })}${spec}</div>
+    <table><thead><tr><th>${t("map.colFilament")}</th><th>${t("analyse.colPainted")}</th><th>${t("analyse.colBase")}</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 const DEFAULT_SLOTS = ["#FFFFFF", "#000000", "#00FFFF", "#FF00FF", "#FFFF00", "#FF0000", "#00FF00", "#0000FF",
@@ -1222,7 +1281,7 @@ function renderMapping() {
   tb.innerHTML = "";
   for (const f of MODEL.filaments) {
     const pct = MODEL.totalTris ? (100 * f.paintedTris / MODEL.totalTris) : 0;
-    const relevant = f.paintedTris > 0 || f.isDefaultOf > 0;
+    const relevant = f.paintedTris > 0 || f.baseTris > 0 || f.isDefaultOf > 0;
     const tr = document.createElement("tr");
     if (!relevant) tr.style.opacity = ".45";
     const opts = slots.map((s) => `<option value="p${s.slot}">${t("map.optSlot", { s: s.slot, color: s.color })}</option>`).join("")
@@ -1250,9 +1309,9 @@ function autoMap() {
       if (!best || d < best.d) best = { d, slot: s.slot };
     }
     if (!best) return;
-    // Basis-Filamente (unbemalte Flächen ganzer Objekte) immer physisch mappen —
+    // Basis-Filamente (unbemalte Flächen von Objekten/Parts) immer physisch mappen —
     // ein virtueller Volume-Extruder macht den kompletten Körper zur Mischung.
-    if (f.isDefaultOf > 0) {
+    if (f.isDefaultOf > 0 || f.baseTris > 0) {
       sel.value = "p" + best.slot;
     } else if (allowMix && best.d > THRESH && slots.length >= 2) {
       const mix = PaintPortCore.bestMix(f.color, slots);
