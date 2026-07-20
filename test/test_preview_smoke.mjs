@@ -94,10 +94,43 @@ const smoke = `
     R.exportVirtualMatches = !!v && v.components.length === pinned.length &&
       pinned.every(([slot, ratio]) => v.components.some((c) => c.extruder === slot && c.ratio === ratio));
 
+    // --- 6) Ziel-Select: beide bbs-Ziele mit ColorMix; Snapmaker → 4 Slots, bbs-Export ---
+    // Entries VOR dem Zippen abgreifen (zipAll-Intercept) statt den Blob zu entpacken:
+    // ein zweiter DecompressionStream-Lauf sprengt das virtual-time-budget (s. Kommentar oben).
+    document.getElementById("exportTarget").value = "bambu";
+    onTargetChange();
+    R.bambuPrinterN = document.getElementById("printerN").value;
+    R.bambuMixEnabled = !document.getElementById("allowMix").disabled && document.getElementById("allowMix").checked;
+    document.getElementById("exportTarget").value = "snapmaker";
+    onTargetChange();
+    R.targetPrinterN = document.getElementById("printerN").value;
+    R.targetMixEnabled = !document.getElementById("allowMix").disabled && document.getElementById("allowMix").checked;
+    R.targetBtn = document.getElementById("btnExport").textContent;
+    blob = null;
+    let bbsEntries = null;
+    const origZipAll = PaintPortCore.zipAll;
+    PaintPortCore.zipAll = (entries) => { bbsEntries = entries; return origZipAll(entries); };
+    await doExport();
+    PaintPortCore.zipAll = origZipAll;
+    if (!blob || !bbsEntries) throw new Error("bbs-Export hat keinen Blob/keine Entries erzeugt");
+    const bbsNames = bbsEntries.map((e) => e.name);
+    const bbsPs = bbsNames.includes("Metadata/project_settings.config")
+      ? JSON.parse(new TextDecoder().decode(bbsEntries.find((e) => e.name === "Metadata/project_settings.config").data)) : null;
+    R.bbsExportOk = bbsNames.includes("Metadata/model_settings.config") &&
+      !bbsNames.includes("Metadata/Slic3r_PE_model.config") &&
+      !bbsNames.includes("Metadata/Prusa_Slicer_full_spectrum.json") &&
+      !!bbsPs && Array.isArray(bbsPs.filament_colour) && bbsPs.filament_colour.length === 4 &&
+      new TextDecoder().decode(bbsEntries.find((e) => e.name === "3D/3dmodel.model").data).includes("BambuStudio-2.3.5");
+    document.getElementById("exportTarget").value = "prusa";
+    onTargetChange();
+
     R.ok = orig.red > 100 && orig.green > 100 && R.mixOptionCount >= 3 &&
            R.pinnedResHasSwatch && R.collisionBadges === 2 &&
            res.white > 200 && res.red < 20 && res.green < 20 &&
-           R.exportVirtualMatches === true;
+           R.exportVirtualMatches === true &&
+           R.targetPrinterN === "4" && R.bambuPrinterN === "16" &&
+           R.bambuMixEnabled === true && R.targetMixEnabled === true &&
+           R.targetBtn.includes("Snapmaker") && R.bbsExportOk === true;
   } catch (e) { R.error = String(e && e.stack || e); }
   document.title = "RESULT:" + JSON.stringify(R);
 })();

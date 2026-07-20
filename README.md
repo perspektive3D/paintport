@@ -1,8 +1,8 @@
 # PaintPort
 
-**Print painted Bambu / MakerWorld models with the right colors on the Prusa Core One INDX.**
+**Print painted Bambu / MakerWorld models with the right colors — on the Prusa Core One INDX, in Bambu Studio or on the Snapmaker U1.**
 
-PaintPort is a free, open-source, single-file web tool by [perspektive3D](https://www.youtube.com/@perspektive3d). It converts multicolor-painted 3MF files (Bambu Studio, MakerWorld, OrcaSlicer) into clean PrusaSlicer project files — mapping the model's filaments to *your* INDX spools and optionally recreating missing colors as **ColorMix blends** (virtual extruders).
+PaintPort is a free, open-source, single-file web tool by [perspektive3D](https://www.youtube.com/@perspektive3d). It re-homes multicolor-painted 3MF files (Bambu Studio, MakerWorld, OrcaSlicer) into clean project files for **PrusaSlicer (Core One INDX)**, **Bambu Studio** or **Snapmaker Orca / OrcaSlicer** — mapping the model's filaments to *your* spools and optionally recreating missing colors as **ColorMix blends**, written in each slicer's native format (Prusa FullSpectrum, Snapmaker "Full Spectrum", Bambu "Mixed Filament").
 
 **→ Use it here: https://perspektive3d.github.io/paintport/** — or download `index.html` and double-click it. Everything runs locally in your browser: no uploads, no server, no tracking.
 
@@ -10,23 +10,21 @@ PaintPort is a free, open-source, single-file web tool by [perspektive3D](https:
 
 ## Why does this exist?
 
-PrusaSlicer 2.9.0+ can already read Bambu's `paint_color` triangle painting directly. What it *cannot* know is which color belongs to which of your INDX slots — the painting indices simply point at filament 1…n of your active profile, so everything comes out in the wrong colors. And colors you don't have loaded are lost entirely.
-
-PaintPort fixes both: it remaps every painting state (deep into the split trees) to your actual spool slots, and builds `Prusa_Slicer_full_spectrum.json` entries so missing colors print as calibrated-ratio blends. The format details are documented in [docs/FORMAT.md](docs/FORMAT.md).
+Slicers can read each other's triangle *painting* — but not its *meaning*: the painting indices point blindly at filament 1…n of whatever profile is active, colors you don't have loaded are lost, and every slicer stores ColorMix blends in its own incompatible format. PaintPort fixes that: it remaps every painting state (deep into the split trees) to your actual spool slots and writes the blend definitions in the target slicer's native schema. The format details — including what we believe is the first public documentation of both bbs ColorMix on-disk formats — are in [docs/FORMAT.md](docs/FORMAT.md).
 
 ## How to use
 
 1. Open PaintPort and drop in a painted 3MF (Bambu Studio / MakerWorld / OrcaSlicer export).
-2. Enter which spool color sits in which INDX slot — or pick a preset (CMY, WCMY, KCMY, WKCMY, WKCMYRGB).
-3. Click **Auto-map** and review the result. Colors without a close spool match can be blended as ColorMix (experimental).
-4. Export the `*_INDX.3mf`.
-5. **Open it in PrusaSlicer 2.9.6+ *as a project*** (File → Open, or choose "Open as project" when drag & dropping).
+2. Enter which spool color sits in which printer slot — or pick a preset (CMY, WCMY, KCMY, WKCMY, WKCMYRGB).
+3. Click **Auto-map** and review the result. Colors without a close spool match can be blended as ColorMix.
+4. Pick the target slicer (PrusaSlicer / Bambu Studio / Snapmaker Orca) and export.
+5. **Open the file in the target slicer *as a project*** (File → Open, or choose "project" when drag & dropping).
 
-> ⚠️ **The "as a project" part matters.** If the file is imported as geometry only, PrusaSlicer silently discards the virtual extruders and slot colors. PaintPort marks its exports so PrusaSlicer shows the project dialog, but the choice is yours to make.
+> ⚠️ **The "as a project" part matters.** Imported as geometry only, the painting survives but ColorMix blends and slot colors are discarded. Project mode may swap your active presets for project placeholders — switching back keeps the colors.
 
 ## Requirements
 
-- **PrusaSlicer 2.9.6 or newer** with the Core One INDX profile.
+- **PrusaSlicer 2.9.6+** (Core One INDX profile), **Bambu Studio 2.7+** or **Snapmaker Orca 2.3.5** — the bbs blend format is unversioned upstream, so newer Orca releases may need a re-test.
 - A browser with Compression Streams support: Chrome/Edge 80+, Safari 16.4+, Firefox 113+.
 - Works fully offline — the single HTML file is the entire tool.
 

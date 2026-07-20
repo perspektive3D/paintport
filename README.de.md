@@ -1,8 +1,8 @@
 # PaintPort
 
-**Bemalte Bambu-/MakerWorld-Modelle mit den richtigen Farben auf dem Prusa Core One INDX drucken.**
+**Bemalte Bambu-/MakerWorld-Modelle mit den richtigen Farben drucken — auf dem Prusa Core One INDX, in Bambu Studio oder auf der Snapmaker U1.**
 
-PaintPort ist ein kostenloses, quelloffenes Single-File-Webtool von [perspektive3D](https://www.youtube.com/@perspektive3d). Es wandelt multicolor-bemalte 3MF-Dateien (Bambu Studio, MakerWorld, OrcaSlicer) in saubere PrusaSlicer-Projektdateien um — die Modell-Filamente werden *deinen* INDX-Spulen zugeordnet, fehlende Farben optional als **ColorMix-Mischung** (virtuelle Extruder) nachgebildet.
+PaintPort ist ein kostenloses, quelloffenes Single-File-Webtool von [perspektive3D](https://www.youtube.com/@perspektive3d). Es zieht multicolor-bemalte 3MF-Dateien (Bambu Studio, MakerWorld, OrcaSlicer) in saubere Projektdateien für **PrusaSlicer (Core One INDX)**, **Bambu Studio** oder **Snapmaker Orca / OrcaSlicer** um — die Modell-Filamente werden *deinen* Spulen zugeordnet, fehlende Farben optional als **ColorMix-Mischung** nachgebildet, jeweils im nativen Format des Ziel-Slicers (Prusa FullSpectrum, Snapmaker „Full Spectrum", Bambu „Mixed Filament").
 
 **→ Direkt nutzen: https://perspektive3d.github.io/paintport/** — oder `index.html` herunterladen und doppelklicken. Alles läuft lokal im Browser: keine Uploads, kein Server, kein Tracking.
 
@@ -10,23 +10,21 @@ PaintPort ist ein kostenloses, quelloffenes Single-File-Webtool von [perspektive
 
 ## Warum gibt es das?
 
-PrusaSlicer 2.9.0+ liest Bambus `paint_color`-Dreiecksbemalung bereits direkt. Was PrusaSlicer *nicht* wissen kann: welche Farbe in welchem deiner INDX-Slots steckt — die Painting-Indizes zeigen stumpf auf Filament 1…n des aktiven Profils, alles kommt in den falschen Farben heraus. Und Farben, die du nicht geladen hast, gehen ganz verloren.
-
-PaintPort löst beides: Es remappt jeden Painting-State (bis in die Split-Bäume hinein) auf deine tatsächlichen Spulen-Slots und erzeugt `Prusa_Slicer_full_spectrum.json`-Einträge, damit fehlende Farben als Mischung gedruckt werden. Die Format-Details stehen in [docs/FORMAT.md](docs/FORMAT.md) (englisch).
+Slicer können die Dreiecks-*Bemalung* der jeweils anderen lesen — aber nicht ihre *Bedeutung*: Die Painting-Indizes zeigen stumpf auf Filament 1…n des aktiven Profils, nicht geladene Farben gehen verloren, und ColorMix-Mischungen speichert jeder Slicer in seinem eigenen, inkompatiblen Format. PaintPort löst das: Es remappt jeden Painting-State (bis in die Split-Bäume hinein) auf deine tatsächlichen Spulen-Slots und schreibt die Misch-Definitionen im nativen Schema des Ziel-Slicers. Die Format-Details — inklusive der unseres Wissens ersten öffentlichen Doku beider bbs-ColorMix-Formate — stehen in [docs/FORMAT.md](docs/FORMAT.md) (englisch).
 
 ## Bedienung
 
 1. PaintPort öffnen und eine bemalte 3MF hineinziehen (Bambu Studio / MakerWorld / OrcaSlicer).
-2. Eintragen, welche Spulenfarbe in welchem INDX-Slot steckt — oder ein Preset wählen (CMY, WCMY, KCMY, WKCMY, WKCMYRGB).
-3. **Auto-Zuordnung** klicken und das Ergebnis prüfen. Farben ohne passende Spule können als ColorMix gemischt werden (experimentell).
-4. Die `*_INDX.3mf` exportieren.
-5. **In PrusaSlicer 2.9.6+ *als Projekt öffnen*** (Datei → Öffnen; beim Drag&Drop „Als Projekt öffnen" wählen).
+2. Eintragen, welche Spulenfarbe in welchem Drucker-Slot steckt — oder ein Preset wählen (CMY, WCMY, KCMY, WKCMY, WKCMYRGB).
+3. **Auto-Zuordnung** klicken und das Ergebnis prüfen. Farben ohne passende Spule können als ColorMix gemischt werden.
+4. Ziel-Slicer wählen (PrusaSlicer / Bambu Studio / Snapmaker Orca) und exportieren.
+5. **Die Datei im Ziel-Slicer *als Projekt öffnen*** (Datei → Öffnen; beim Drag&Drop „Projekt" wählen).
 
-> ⚠️ **Das „als Projekt" ist entscheidend.** Wird die Datei nur als Geometrie importiert, verwirft PrusaSlicer die virtuellen Extruder und Slot-Farben kommentarlos. PaintPort markiert seine Exporte so, dass PrusaSlicer den Projekt-Dialog zeigt — die Wahl liegt aber bei dir.
+> ⚠️ **Das „als Projekt" ist entscheidend.** Als reine Geometrie importiert bleibt das Painting erhalten, aber ColorMix-Mischfarben und Slot-Farben gehen verloren. Der Projekt-Modus kann deine aktiven Presets gegen Projekt-Platzhalter tauschen — zurückwechseln behält die Farben.
 
 ## Voraussetzungen
 
-- **PrusaSlicer 2.9.6 oder neuer** mit dem Core-One-INDX-Profil.
+- **PrusaSlicer 2.9.6+** (Core-One-INDX-Profil), **Bambu Studio 2.7+** oder **Snapmaker Orca 2.3.5** — das bbs-Mischformat ist upstream versionslos, neuere Orca-Versionen brauchen ggf. einen Nachtest.
 - Browser mit Compression-Streams-Support: Chrome/Edge 80+, Safari 16.4+, Firefox 113+.
 - Funktioniert komplett offline — die eine HTML-Datei ist das ganze Tool.
 

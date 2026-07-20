@@ -2,6 +2,39 @@
 
 All notable changes to PaintPort. Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [0.7.0] — 2026-07-20
+
+### Added
+- **Multi-slicer export**: a new target selector in the export step. Besides the existing
+  PrusaSlicer (Core One INDX) project, PaintPort now writes native project files for
+  **Bambu Studio** and **Snapmaker Orca / OrcaSlicer** — including painting, your mapped
+  slot colors and **ColorMix blends** in each slicer's own format:
+  - *Snapmaker Orca* ("Full Spectrum"): blends are written as `mixed_filament_definitions`
+    entries — all PaintPort ratios work (1:1, 1:3, 3:1 and three-component 1:1:1). Blend
+    filaments appear after the physical slots, exactly where the painting points.
+    Tested against Snapmaker Orca **2.3.5**; the format is unversioned upstream, so future
+    Orca releases may need a re-test.
+  - *Bambu Studio* ("Mixed Filament"): blends become additional filament slots with
+    predicted color, components and sublayer ratios (`filament_is_mixed` & co.).
+    Physical + blended filaments are capped at Bambu's 16-filament limit. Note that
+    MakerWorld does not accept mixed-filament 3MFs for upload. Tested against
+    Bambu Studio **2.7.1**.
+- Target-aware defaults: printer extruder count (INDX 8, Bambu AMS 16, Snapmaker U1 4),
+  file suffix (`_INDX` / `_bambu` / `_snapmaker`) and per-target usage hints.
+- The bbs-flavor exports carry a **minimal** `project_settings.config` (slot colors, blend
+  definitions, version — nothing else), so opening as a project does not clobber your
+  printer/process presets beyond a placeholder preset name. Objects with negative/modifier
+  volumes are exported in the component structure the bbs importers actually read, so
+  alignment-pin cutouts survive.
+- Re-importing a PaintPort bbs export back into PaintPort now reconstructs part volumes
+  correctly (component parts).
+- The format details — including what we believe is the first public documentation of both
+  bbs ColorMix on-disk schemas — are in [docs/FORMAT.md](docs/FORMAT.md).
+
+### Changed
+- UI wording is now target-neutral ("filament slots" instead of INDX-specific labels);
+  the export hint explains the project-vs-geometry trade-off per slicer.
+
 ## [0.6.0] — 2026-07-07
 
 ### Added

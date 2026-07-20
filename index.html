@@ -161,8 +161,7 @@ body.dark .warnbox{background:var(--koralle);color:var(--warmweiss)}
     <button class="langbtn" onclick="openModal('helpModal')" title="Hilfe / Help">?</button>
   </div>
 </header>
-<div class="sub" data-i18n-html="app.subtitle">Bemalte Bambu-/MakerWorld-3MF-Dateien für <b>PrusaSlicer 2.9.6+</b> (Prusa Core One INDX) umwandeln:
-Filamente den INDX-Slots zuordnen, fehlende Farben optional als ColorMix-Mischung (virtueller Extruder). Läuft komplett lokal im Browser.</div>
+<div class="sub" data-i18n-html="app.subtitle">Bemalte 3MF-Dateien umziehen und Filamente den eigenen Spulen zuordnen — Ziel: <b>PrusaSlicer</b> (Core One INDX, inkl. ColorMix-Mischfarben), <b>Bambu Studio</b> oder <b>Snapmaker Orca / OrcaSlicer</b>. Läuft komplett lokal im Browser.</div>
 
 <div class="card">
   <div id="drop"><span data-i18n-html="drop.label"><strong>3MF hierher ziehen</strong> oder klicken — Bambu Studio / MakerWorld / OrcaSlicer / PrusaSlicer</span><input type="file" id="fi" accept=".3mf" class="hidden"></div>
@@ -175,12 +174,12 @@ Filamente den INDX-Slots zuordnen, fehlende Farben optional als ColorMix-Mischun
 </div>
 
 <div class="card hidden" id="cardSlots">
-  <h2 data-i18n="step.slots">2 · INDX-Spulen (physische Toolheads)</h2>
+  <h2 data-i18n="step.slots">2 · Filament-Slots (Spulen am Drucker)</h2>
   <div class="row" style="margin-bottom:10px">
     <label style="font-size:12.5px;color:var(--txd)"><span data-i18n="slots.printerN">Drucker-Extruderzahl:</span>
       <input type="number" id="printerN" min="1" max="16" value="8" style="width:62px" onchange="renderSlots();renderMapping()">
     </label>
-    <span class="hint" style="margin-top:0" data-i18n="slots.printerHint">Core One INDX 8T = 8. Virtuelle ColorMix-Extruder bekommen IDs oberhalb dieser Zahl.</span>
+    <span class="hint" style="margin-top:0" id="printerHint" data-i18n="slots.printerHint">Core One INDX 8T = 8. Virtuelle ColorMix-Extruder bekommen IDs oberhalb dieser Zahl.</span>
   </div>
   <div id="slots"></div>
   <div class="row" style="margin-top:8px">
@@ -188,12 +187,12 @@ Filamente den INDX-Slots zuordnen, fehlende Farben optional als ColorMix-Mischun
     <span id="presetBtns" class="row" style="gap:6px"></span>
     <label style="font-size:12.5px;color:var(--txd)"><input type="checkbox" id="allowMix" checked> <span data-i18n="slots.allowMix">ColorMix-Mischungen (virtuelle Extruder) erlauben</span></label>
   </div>
-  <div class="hint" data-i18n="slots.hint">Trage hier ein, welche Spulenfarbe in welchem INDX-Slot steckt. Nicht bestückte Slots deaktivieren.</div>
+  <div class="hint" data-i18n="slots.hint">Trage hier ein, welche Spulenfarbe in welchem Drucker-Slot steckt. Nicht bestückte Slots deaktivieren.</div>
 </div>
 
 <div class="card hidden" id="cardMap">
   <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px">
-    <h2 data-i18n="step.map" style="margin-bottom:0">3 · Zuordnung Modellfarben → INDX</h2>
+    <h2 data-i18n="step.map" style="margin-bottom:0">3 · Zuordnung Modellfarben → Slots</h2>
     <button onclick="autoMap()" data-i18n="map.autoBtn" style="padding:9px 18px">Auto-Zuordnung (Farbabstand)</button>
   </div>
   <table id="mapTable"><thead><tr><th data-i18n="map.colFilament">Modell-Filament</th><th data-i18n="map.colShare">Anteil</th><th data-i18n="map.colTarget">Ziel</th><th data-i18n="map.colResult">Ergebnis</th></tr></thead><tbody></tbody></table>
@@ -204,7 +203,7 @@ Filamente den INDX-Slots zuordnen, fehlende Farben optional als ColorMix-Mischun
   <h2 data-i18n="preview.title">4 · Vorschau</h2>
   <div class="row" style="margin-bottom:10px">
     <button class="ghost" id="pvBtnOriginal" onclick="setPreviewMode('original')" data-i18n="preview.original">Original (Datei)</button>
-    <button class="ghost" id="pvBtnResult" onclick="setPreviewMode('result')" data-i18n="preview.result">Ergebnis (INDX)</button>
+    <button class="ghost" id="pvBtnResult" onclick="setPreviewMode('result')" data-i18n="preview.result">Ergebnis (gemappt)</button>
   </div>
   <canvas id="pvCanvas" style="width:100%;height:440px;display:block;border-radius:var(--radius-md);background:var(--soft);touch-action:none"></canvas>
   <div class="hint" data-i18n="preview.hint">Farbeindruck (dominanter Paint-State pro Dreieck; Negativ-/Modifier-Volumes ausgeblendet). Ziehen = drehen · Rad = zoomen · Shift/Rechtsklick-Ziehen = verschieben.</div>
@@ -212,9 +211,18 @@ Filamente den INDX-Slots zuordnen, fehlende Farben optional als ColorMix-Mischun
 
 <div class="card hidden" id="cardExport">
   <h2 data-i18n="step.export">5 · Export</h2>
+  <div class="row" style="margin-bottom:10px">
+    <label style="font-size:12.5px;color:var(--txd)"><span data-i18n="export.target">Ziel-Slicer:</span>
+      <select id="exportTarget" onchange="onTargetChange()">
+        <option value="prusa">PrusaSlicer (Core One INDX)</option>
+        <option value="bambu">Bambu Studio</option>
+        <option value="snapmaker">Snapmaker Orca / OrcaSlicer</option>
+      </select>
+    </label>
+  </div>
   <div class="row">
     <button id="btnExport" onclick="doExport()" data-i18n="export.btn">3MF für PrusaSlicer exportieren</button>
-    <span class="hint" style="margin-top:0" data-i18n-html="export.hint">Ausgabe in PrusaSlicer 2.9.6+ <b>als Projekt öffnen</b> (Datei → Öffnen; beim Drag&amp;Drop im Dialog „Als Projekt öffnen" wählen — nur dann lädt PrusaSlicer die virtuellen Extruder und Slot-Farben). Drucker: Core One INDX. ColorMix-Zuordnungen sind experimentell.</span>
+    <span class="hint" style="margin-top:0" id="exportHint" data-i18n-html="export.hint">Ausgabe in PrusaSlicer 2.9.6+ <b>als Projekt öffnen</b> (Datei → Öffnen; beim Drag&amp;Drop im Dialog „Als Projekt öffnen" wählen — nur dann lädt PrusaSlicer die virtuellen Extruder und Slot-Farben). Drucker: Core One INDX. ColorMix-Zuordnungen sind experimentell.</span>
   </div>
 </div>
 
@@ -236,15 +244,15 @@ Es wird kein Code dieser Projekte ausgeliefert; Formate wurden zur Interoperabil
     </div>
     <div class="mlogo">Paint<span>Port</span></div>
     <a class="brandline" href="https://www.youtube.com/@perspektive3d" target="_blank" rel="noopener" style="margin-bottom:8px">by <svg class="p3dlogo" viewBox="0 0 1200 280" role="img" aria-label="perspektive3D"><use href="#p3dlogoSym"/></svg></a>
-    <p data-i18n="help.tagline">Bemalte Bambu-/MakerWorld-Modelle mit den richtigen Farben auf dem Prusa Core One INDX drucken — komplett lokal im Browser.</p>
+    <p data-i18n="help.tagline">Bemalte Bambu-/MakerWorld-Modelle mit den richtigen Farben auf deinem Drucker — Ziel: PrusaSlicer (Core One INDX), Bambu Studio oder Snapmaker Orca, inkl. ColorMix-Mischfarben. Komplett lokal im Browser.</p>
     <h3 data-i18n="help.quickstart">Quickstart</h3>
     <ol>
       <li data-i18n="help.step1">Bemalte 3MF (Bambu Studio / MakerWorld / OrcaSlicer) in das Feld oben ziehen.</li>
-      <li data-i18n="help.step2">Eintragen, welche Spulenfarbe in welchem INDX-Slot steckt (oder ein Preset wählen).</li>
+      <li data-i18n="help.step2">Eintragen, welche Spulenfarbe in welchem Drucker-Slot steckt (oder ein Preset wählen).</li>
       <li data-i18n="help.step3">„Auto-Zuordnung" klicken und das Ergebnis prüfen — fehlende Farben werden optional als ColorMix gemischt.</li>
-      <li data-i18n="help.step4">Exportieren und die Datei in PrusaSlicer 2.9.6+ öffnen.</li>
+      <li data-i18n="help.step4">Ziel-Slicer wählen, exportieren und die Datei dort als Projekt öffnen.</li>
     </ol>
-    <div class="warnbox" data-i18n-html="help.projectWarn"><b>Wichtig:</b> Die exportierte 3MF in PrusaSlicer <b>als Projekt öffnen</b> (Datei → Öffnen bzw. beim Drag&amp;Drop „Als Projekt öffnen" wählen). Sonst verwirft PrusaSlicer die virtuellen Extruder und Slot-Farben kommentarlos.</div>
+    <div class="warnbox" data-i18n-html="help.projectWarn"><b>Wichtig:</b> Die exportierte 3MF im Ziel-Slicer <b>als Projekt öffnen</b> (Datei → Öffnen bzw. beim Drag&amp;Drop „Projekt" wählen). Sonst gehen ColorMix-Mischfarben und Slot-Farben verloren — das Painting selbst bleibt erhalten.</div>
     <h3 data-i18n="help.channels">Mehr von perspektive3D</h3>
     <div class="chanrow">
       <a href="https://www.youtube.com/@perspektive3d?sub_confirmation=1" target="_blank">▶ perspektive3D (DE)</a>
@@ -258,7 +266,7 @@ Es wird kein Code dieser Projekte ausgeliefert; Formate wurden zur Interoperabil
   <div class="mbox">
     <button class="mclose" onclick="closeModal('thanksModal')">✕</button>
     <div class="mlogo" data-i18n="thanks.title">Export fertig — danke, dass du PaintPort nutzt! 🎉</div>
-    <p data-i18n-html="thanks.body">Denk dran: die Datei in PrusaSlicer <b>als Projekt öffnen</b>. Wenn dir PaintPort hilft, freue ich mich über ein Abo — dort zeige ich auch, wie solche Tools entstehen.</p>
+    <p data-i18n-html="thanks.body">Denk dran: die Datei im Ziel-Slicer <b>als Projekt öffnen</b>. Wenn dir PaintPort hilft, freue ich mich über ein Abo — dort zeige ich auch, wie solche Tools entstehen.</p>
     <div class="chanrow">
       <a href="https://www.youtube.com/@perspektive3d?sub_confirmation=1" target="_blank" data-i18n="thanks.subDe">▶ perspektive3D abonnieren (DE)</a>
       <a href="https://www.youtube.com/@p3d-intl?sub_confirmation=1" target="_blank" data-i18n="thanks.subEn">▶ Subscribe p3d-intl (EN)</a>
@@ -288,7 +296,7 @@ Es wird kein Code dieser Projekte ausgeliefert; Formate wurden zur Interoperabil
 // ============================================================
 "use strict";
 
-const PAINTPORT_VERSION = "0.6.0"; // einzige Versions-Quelle (UI-Badge + Generator-Metadata)
+const PAINTPORT_VERSION = "0.7.0"; // einzige Versions-Quelle (UI-Badge + Generator-Metadata)
 
 // Core-Fehler: englische Message + stabiler err.code (UI übersetzt via I18N "err.<code>")
 const CORE_ERRORS = {
@@ -667,6 +675,10 @@ async function load3MF(bytes) {
           extruder: pe ? Math.max(1, parseInt(pe[1], 10) || 1) : null,
           type: VOLUME_TYPES[pa.subtype] || "ModelPart",
           name: pn ? pn[1] : null,
+          // Range-Parts (PaintPort-bbs-Export, Ein-Mesh-Layout): Dreiecks-Range statt
+          // Component-Referenz — sonst würden Negativ-Volumes beim Re-Import solide.
+          firstid: pa.firstid !== undefined ? parseInt(pa.firstid, 10) : null,
+          lastid: pa.lastid !== undefined ? parseInt(pa.lastid, 10) : null,
         });
       }
       objMeta.set(idM[1], meta);
@@ -693,7 +705,12 @@ async function load3MF(bytes) {
     const meta = objMeta.get(item.objectid) || { name: null, extruder: 1, parts: new Map() };
     const parts = [];
     if (mo.hasMesh) {
-      parts.push({ obj: mo, transform: null, extruder: meta.extruder, type: "ModelPart", partName: null });
+      // Range-Parts nur im reinen Ein-Mesh-Fall (keine Components) — Bambu-Dateien
+      // referenzieren Parts über Component-Objekt-IDs, PaintPort-bbs-Exporte über Ranges.
+      const rangeParts = mo.components.length ? [] : [...meta.parts.values()]
+        .filter((p) => p.firstid !== null && p.lastid !== null && p.lastid >= p.firstid)
+        .sort((a, b) => a.firstid - b.firstid);
+      parts.push({ obj: mo, transform: null, extruder: meta.extruder, type: "ModelPart", partName: null, ranges: rangeParts.length ? rangeParts : null });
     }
     for (const comp of mo.components) {
       const src = comp.path ? getExternal(comp.path).objects.get(comp.objectid) : main.objects.get(comp.objectid);
@@ -731,7 +748,21 @@ async function load3MF(bytes) {
         tris[(to + i) * 3 + 2] = src.tris[i * 3 + 2] + vo;
         paints[to + i] = src.paints[i];
       }
-      partRanges.push({ firstTri: to, triCount: tn, extruder: p.extruder, type: p.type || "ModelPart", name: p.partName || null });
+      if (p.ranges) {
+        // Dreiecks-Ranges aus der Config aufs flache Mesh legen; Lücken werden als
+        // ModelPart mit Objekt-Extruder gefüllt, unplausible Ranges übersprungen.
+        let cursor = 0;
+        for (const r of p.ranges) {
+          const f = r.firstid, l = Math.min(tn - 1, r.lastid);
+          if (f < cursor || f >= tn || l < f) continue;
+          if (f > cursor) partRanges.push({ firstTri: to + cursor, triCount: f - cursor, extruder: p.extruder, type: "ModelPart", name: null });
+          partRanges.push({ firstTri: to + f, triCount: l - f + 1, extruder: r.extruder || p.extruder, type: r.type || "ModelPart", name: r.name || null });
+          cursor = l + 1;
+        }
+        if (cursor < tn) partRanges.push({ firstTri: to + cursor, triCount: tn - cursor, extruder: p.extruder, type: "ModelPart", name: null });
+      } else {
+        partRanges.push({ firstTri: to, triCount: tn, extruder: p.extruder, type: p.type || "ModelPart", name: p.partName || null });
+      }
       vo += n; to += tn;
     }
     outObjects.push({
@@ -868,55 +899,86 @@ function bestMix(targetHex, slots) {
 // ---------- Prusa-3MF bauen ----------
 function xmlEscape(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
 
-function buildPrusa3MF(model, plan) {
-  // plan: { stateMap: Map<srcExtruder, dstId>, physical: [{slot, color}], virtuals: [{id, color, components:[{extruder, ratio}]}] }
+// Prusa-volume_type → bbs-subtype (ModelVolume::type_from_string der bbs-Slicer kennt NUR
+// diese Strings; Prusa-Namen fallen dort still auf normal_part zurück — ein NegativeVolume
+// würde solide gedruckt)
+const BBS_VOLUME_TYPES = Object.fromEntries(Object.entries(VOLUME_TYPES).map(([k, v]) => [v, k]));
+
+function build3MF(model, plan) {
+  // plan: { target: "prusa" (Default) | "bambu", stateMap: Map<srcExtruder, dstId>, physical: [{slot, color}], virtuals: [{id, color, components:[{extruder, ratio}]}] }
+  // "bambu" deckt Bambu Studio, Snapmaker Orca UND (künftig) Upstream-OrcaSlicer ab —
+  // gemeinsame bbs_3mf.cpp-Basis: liest paint_color bedingungslos und Range-Volumes
+  // (firstid/lastid) über denselben <part>/<volume>-Handler.
+  const bambu = plan.target === "bambu";
+  // ColorMix in der bbs-Welt, zwei Formate: Snapmaker Orca (mixFormat "snapmaker") =
+  // mixed_filament_definitions-Kompaktstring; Bambu Studio (mixFormat "bambu") =
+  // per-Slot-Arrays filament_is_mixed/_components/_ratios (Mixe sind dort reguläre
+  // Filament-Slots derselben Liste, Ground Truth SpeedBoat).
+  const smMix = bambu && plan.mixFormat === "snapmaker";
+  const bsMix = bambu && plan.mixFormat === "bambu";
+  if (bambu && !smMix && !bsMix && plan.virtuals && plan.virtuals.length) {
+    const e = new Error("ColorMix braucht für bbs-Ziele ein mixFormat (snapmaker | bambu)");
+    e.code = "ERR_BBS_NO_MIX";
+    throw e;
+  }
+  if (bsMix && plan.virtuals && plan.virtuals.length && plan.physical.length + plan.virtuals.length > 16) {
+    const e = new Error("Bambu Studio unterstützt maximal 16 Filamente (physisch + Mischfarben)");
+    e.code = "ERR_BBS_MAX16";
+    throw e;
+  }
   let maxState = 0;
   const mapState = (s) => {
     const d = plan.stateMap.get(s);
     return d === undefined ? s : d;
   };
+  const ATTR_PAINT = bambu ? "paint_color" : "slic3rpe:mmu_segmentation";
+  const leafCache = new Map(); // Paint-All: Leaf-String je gemapptem Extruder-State
+  const leafStr = (s) => { let v = leafCache.get(s); if (v === undefined) { v = emitPaintTree({ state: s }); leafCache.set(s, v); } return v; };
 
   const modelParts = [];
   modelParts.push('<?xml version="1.0" encoding="UTF-8"?>\n');
-  modelParts.push('<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:slic3rpe="http://schemas.slic3r.org/3mf/2017/06">\n');
   const today = plan.date || "2026-01-01";
-  // MmPaintingVersion wird nach dem Remap gesetzt → Platzhalter, am Ende ersetzt
-  modelParts.push(" <metadata name=\"slic3rpe:Version3mf\">1</metadata>\n");
-  modelParts.push("__MM_VERSION__");
-  // "PrusaSlicer-<version>" in der Application-Metadata ist PrusaSlicers Projekt-Erkennung
-  // (is_project_3mf): ohne diesen Marker und ohne Slic3r_PE.config lädt Drag&Drop/Doppelklick
-  // die Datei STILL als reine Geometrie und verwirft Prusa_Slicer_full_spectrum.json samt
-  // virtueller Extruder. Muss in den ersten 1024 Bytes stehen → vor dem (variablen) Title.
-  modelParts.push(` <metadata name="Application">PrusaSlicer-2.9.6</metadata>\n`);
-  modelParts.push(` <metadata name="Generator">PaintPort-${PAINTPORT_VERSION}</metadata>\n`);
-  modelParts.push(` <metadata name="Title">${xmlEscape(plan.title || "PaintPort Export")}</metadata>\n`);
-  modelParts.push(` <metadata name="CreationDate">${today}</metadata>\n`);
+  // Application-String je Ziel: setzt m_is_bbl_3mf ("BambuStudio-"-Präfix) UND liefert
+  // file_version (bbs_3mf.cpp: file_version = m_bambuslicer_generator_version) für die
+  // Versions-Dialoge in Plater.cpp — sollte der Version des Ziel-Slicers entsprechen.
+  const bbsApp = plan.bbsApp || "BambuStudio-2.3.5";
+  if (bambu) {
+    // Header wie von Snapmaker Orca / Bambu Studio gespeicherte Dateien; unterdrückt
+    // auch den BS-≥2.5-Farbkonvertier-Dialog.
+    // Bewusst KEINE MmPaintingVersion-Metadata: BambuStudio:MmPaintingVersion > 0 wirft
+    // beim bbs-Import version_error (MM_PAINTING_VERSION=0), die slic3rpe-Variante wird
+    // ignoriert, echte bbs-Dateien schreiben keine.
+    modelParts.push('<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:BambuStudio="http://schemas.bambulab.com/package/2021">\n');
+    modelParts.push(` <metadata name="Application">${xmlEscape(bbsApp)}</metadata>\n`);
+    modelParts.push(' <metadata name="BambuStudio:3mfVersion">1</metadata>\n');
+    modelParts.push(` <metadata name="Generator">PaintPort-${PAINTPORT_VERSION}</metadata>\n`);
+    modelParts.push(` <metadata name="Title">${xmlEscape(plan.title || "PaintPort Export")}</metadata>\n`);
+    modelParts.push(` <metadata name="CreationDate">${today}</metadata>\n`);
+  } else {
+    modelParts.push('<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:slic3rpe="http://schemas.slic3r.org/3mf/2017/06">\n');
+    // MmPaintingVersion wird nach dem Remap gesetzt → Platzhalter, am Ende ersetzt
+    modelParts.push(" <metadata name=\"slic3rpe:Version3mf\">1</metadata>\n");
+    modelParts.push("__MM_VERSION__");
+    // "PrusaSlicer-<version>" in der Application-Metadata ist PrusaSlicers Projekt-Erkennung
+    // (is_project_3mf): ohne diesen Marker und ohne Slic3r_PE.config lädt Drag&Drop/Doppelklick
+    // die Datei STILL als reine Geometrie und verwirft Prusa_Slicer_full_spectrum.json samt
+    // virtueller Extruder. Muss in den ersten 1024 Bytes stehen → vor dem (variablen) Title.
+    modelParts.push(` <metadata name="Application">PrusaSlicer-2.9.6</metadata>\n`);
+    modelParts.push(` <metadata name="Generator">PaintPort-${PAINTPORT_VERSION}</metadata>\n`);
+    modelParts.push(` <metadata name="Title">${xmlEscape(plan.title || "PaintPort Export")}</metadata>\n`);
+    modelParts.push(` <metadata name="CreationDate">${today}</metadata>\n`);
+  }
   modelParts.push(" <resources>\n");
 
   const configObjects = [];
-  model.objects.forEach((o, oi) => {
-    const objId = oi + 1;
-    modelParts.push(`  <object id="${objId}" type="model">\n   <mesh>\n    <vertices>\n`);
-    const v = o.vertices;
-    for (let i = 0; i < v.length; i += 3) {
-      modelParts.push(`     <vertex x="${v[i]}" y="${v[i + 1]}" z="${v[i + 2]}"/>\n`);
-    }
-    modelParts.push("    </vertices>\n    <triangles>\n");
+  const buildIds = []; // Export-Objekt-ID je model.objects-Eintrag (Composite: Parent-ID)
+  let nextId = 1;
+  model.objects.forEach((o) => {
     const t = o.tris;
-    for (let i = 0; i < t.length / 3; i++) {
-      const p = o.paints[i];
-      if (p) {
-        const rm = remapPaintString(p, mapState);
-        if (rm.maxState > maxState) maxState = rm.maxState;
-        modelParts.push(`     <triangle v1="${t[i * 3]}" v2="${t[i * 3 + 1]}" v3="${t[i * 3 + 2]}" slic3rpe:mmu_segmentation="${rm.str}"/>\n`);
-      } else {
-        modelParts.push(`     <triangle v1="${t[i * 3]}" v2="${t[i * 3 + 1]}" v3="${t[i * 3 + 2]}"/>\n`);
-      }
-    }
-    modelParts.push("    </triangles>\n   </mesh>\n  </object>\n");
     // Volume-Ranges je Part-Basis-Extruder; aufeinanderfolgende ModelParts mit gleichem
     // Ziel-Extruder verschmelzen (ohne Part-Overrides ⇒ genau eine Range wie bisher).
     // Negativ-/Modifier-/Support-Volumes bleiben einzeln und drucken nicht → kein Extruder.
+    // (Vor der Dreiecksschleife berechnet, weil Paint-All die Ranges braucht.)
     const srcParts = (o.parts && o.parts.length) ? o.parts : [{ firstTri: 0, triCount: t.length / 3, extruder: o.defaultExtruder, type: "ModelPart" }];
     const ranges = [];
     for (const p of srcParts) {
@@ -926,32 +988,135 @@ function buildPrusa3MF(model, plan) {
       if (type === "ModelPart" && last && last.type === "ModelPart" && last.extruder === ext) last.lastid = p.firstTri + p.triCount - 1;
       else ranges.push({ firstid: p.firstTri, lastid: p.firstTri + p.triCount - 1, extruder: ext, type, name: p.name || null });
     }
-    configObjects.push({ id: objId, name: o.name, ranges });
+    // Paint-All (bbs): unbemalte ModelPart-Dreiecke bekommen den Leaf-State ihres
+    // gemappten Basis-Extruders — Gürtel und Hosenträger zum extruder-Key der Config;
+    // ZIP frisst die Redundanz. Spezial-Volumes (drucken nicht) bleiben unbemalt.
+    let fill = null;
+    if (bambu) {
+      fill = new Int32Array(t.length / 3);
+      for (const r of ranges) if (r.type === "ModelPart" && r.extruder > 0) fill.fill(r.extruder, r.firstid, r.lastid + 1);
+    }
+    // bbs-Import kennt NUR Component-Parts: _generate_volumes_new matcht <part id> gegen
+    // Component-Objekt-IDs; der alte Range-Pfad (_generate_volumes, firstid/lastid) ist
+    // in Bambu UND Snapmaker toter Code (keine Callsites). Objekte mit Spezial-Volumes
+    // müssen deshalb als Parent+Components mit eigenen Mesh-Objekten raus — sonst würden
+    // Negativ-Volumes solide. Reine ModelPart-Objekte bleiben flach (Paint-All trägt die
+    // Farben, part id == object id fürs Metadata-Matching).
+    const composite = bambu && ranges.some((r) => r.type !== "ModelPart");
+    const emitTriangle = (v1, v2, v3, i, fillState) => {
+      const p = o.paints[i];
+      if (p) {
+        const rm = remapPaintString(p, mapState);
+        if (rm.maxState > maxState) maxState = rm.maxState;
+        modelParts.push(`     <triangle v1="${v1}" v2="${v2}" v3="${v3}" ${ATTR_PAINT}="${rm.str}"/>\n`);
+      } else if (fillState > 0) {
+        if (fillState > maxState) maxState = fillState;
+        modelParts.push(`     <triangle v1="${v1}" v2="${v2}" v3="${v3}" paint_color="${leafStr(fillState)}"/>\n`);
+      } else {
+        modelParts.push(`     <triangle v1="${v1}" v2="${v2}" v3="${v3}"/>\n`);
+      }
+    };
+    const v = o.vertices;
+    if (!composite) {
+      const objId = nextId++;
+      modelParts.push(`  <object id="${objId}" type="model">\n   <mesh>\n    <vertices>\n`);
+      for (let i = 0; i < v.length; i += 3) {
+        modelParts.push(`     <vertex x="${v[i]}" y="${v[i + 1]}" z="${v[i + 2]}"/>\n`);
+      }
+      modelParts.push("    </vertices>\n    <triangles>\n");
+      for (let i = 0; i < t.length / 3; i++) emitTriangle(t[i * 3], t[i * 3 + 1], t[i * 3 + 2], i, bambu ? fill[i] : 0);
+      modelParts.push("    </triangles>\n   </mesh>\n  </object>\n");
+      buildIds.push(objId);
+      configObjects.push({ id: objId, name: o.name, ranges, childIds: null });
+    } else {
+      // je Range ein eigenes Mesh-Objekt (Vertices der Range extrahiert + neu indiziert)
+      const childIds = [];
+      for (const r of ranges) {
+        const cid = nextId++;
+        childIds.push(cid);
+        const fillState = (r.type === "ModelPart" && r.extruder > 0) ? r.extruder : 0;
+        const vmap = new Map();
+        const localVerts = [];
+        const localTris = [];
+        for (let i = r.firstid; i <= r.lastid; i++) {
+          const tri = [];
+          for (let k = 0; k < 3; k++) {
+            const vi = t[i * 3 + k];
+            let nv = vmap.get(vi);
+            if (nv === undefined) { nv = localVerts.length; vmap.set(vi, nv); localVerts.push(vi); }
+            tri.push(nv);
+          }
+          localTris.push(tri);
+        }
+        modelParts.push(`  <object id="${cid}" type="model">\n   <mesh>\n    <vertices>\n`);
+        for (const vi of localVerts) {
+          modelParts.push(`     <vertex x="${v[vi * 3]}" y="${v[vi * 3 + 1]}" z="${v[vi * 3 + 2]}"/>\n`);
+        }
+        modelParts.push("    </vertices>\n    <triangles>\n");
+        for (let k = 0; k < localTris.length; k++) emitTriangle(localTris[k][0], localTris[k][1], localTris[k][2], r.firstid + k, fillState);
+        modelParts.push("    </triangles>\n   </mesh>\n  </object>\n");
+      }
+      const pid = nextId++;
+      modelParts.push(`  <object id="${pid}" type="model">\n   <components>\n`);
+      for (const cid of childIds) modelParts.push(`    <component objectid="${cid}"/>\n`);
+      modelParts.push("   </components>\n  </object>\n");
+      buildIds.push(pid);
+      configObjects.push({ id: pid, name: o.name, ranges, childIds });
+    }
   });
   modelParts.push(" </resources>\n <build>\n");
   model.objects.forEach((o, oi) => {
     const tf = o.transform ? ` transform="${xmlEscape(o.transform)}"` : "";
-    modelParts.push(`  <item objectid="${oi + 1}"${tf} printable="1"/>\n`);
+    modelParts.push(`  <item objectid="${buildIds[oi]}"${tf} printable="1"/>\n`);
   });
   modelParts.push(" </build>\n</model>\n");
 
   const mmVersion = maxState > 16 ? 2 : 1;
-  const modelXml = modelParts.join("").replace("__MM_VERSION__", ` <metadata name="slic3rpe:MmPaintingVersion">${mmVersion}</metadata>\n`);
+  const modelXml = bambu
+    ? modelParts.join("")
+    : modelParts.join("").replace("__MM_VERSION__", ` <metadata name="slic3rpe:MmPaintingVersion">${mmVersion}</metadata>\n`);
 
   const cfg = ['<?xml version="1.0" encoding="UTF-8"?>\n<config>\n'];
-  for (const co of configObjects) {
-    cfg.push(` <object id="${co.id}" instances_count="1">\n`);
-    cfg.push(`  <metadata type="object" key="name" value="${xmlEscape(co.name)}"/>\n`);
-    for (const r of co.ranges) {
-      cfg.push(`  <volume firstid="${r.firstid}" lastid="${r.lastid}">\n`);
-      cfg.push(`   <metadata type="volume" key="name" value="${xmlEscape(r.type === "ModelPart" ? co.name : (r.name || co.name))}"/>\n`);
-      cfg.push(`   <metadata type="volume" key="volume_type" value="${r.type}"/>\n`);
-      if (r.extruder > 0) cfg.push(`   <metadata type="volume" key="extruder" value="${r.extruder}"/>\n`);
-      cfg.push('   <metadata type="volume" key="matrix" value="1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"/>\n');
-      cfg.push('   <mesh edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/>\n');
-      cfg.push("  </volume>\n");
+  if (bambu) {
+    // bbs-model_settings.config: <part id> MUSS eine Component-Objekt-ID sein —
+    // _generate_volumes_new matcht volumes[..].subobject_id gegen die Component-IDs
+    // (Range-Parts mit firstid/lastid liest nur der tote Alt-Pfad, s.o.).
+    // Flache Objekte: part id == object id (Inline-Layout wie GrainPort/Import-Default).
+    // Subtypen MÜSSEN bbs-Strings sein (BBS_VOLUME_TYPES); extruder-Key landet per
+    // set_deserialize in der Volume-Config.
+    for (const co of configObjects) {
+      cfg.push(` <object id="${co.id}">\n`);
+      cfg.push(`  <metadata key="name" value="${xmlEscape(co.name)}"/>\n`);
+      const firstPart = co.ranges.find((r) => r.type === "ModelPart" && r.extruder > 0);
+      if (firstPart) cfg.push(`  <metadata key="extruder" value="${firstPart.extruder}"/>\n`);
+      const partDefs = co.childIds
+        ? co.ranges.map((r, k) => ({ pid: co.childIds[k], r }))
+        : [{ pid: co.id, r: { type: "ModelPart", extruder: firstPart ? firstPart.extruder : 0, name: null } }];
+      for (const { pid, r } of partDefs) {
+        cfg.push(`  <part id="${pid}" subtype="${BBS_VOLUME_TYPES[r.type] || "normal_part"}">\n`);
+        cfg.push(`   <metadata key="name" value="${xmlEscape(r.type === "ModelPart" ? co.name : (r.name || co.name))}"/>\n`);
+        if (r.extruder > 0) cfg.push(`   <metadata key="extruder" value="${r.extruder}"/>\n`);
+        cfg.push('   <metadata key="matrix" value="1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"/>\n');
+        cfg.push('   <mesh_stat edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/>\n');
+        cfg.push("  </part>\n");
+      }
+      cfg.push(" </object>\n");
     }
-    cfg.push(" </object>\n");
+  } else {
+    for (const co of configObjects) {
+      cfg.push(` <object id="${co.id}" instances_count="1">\n`);
+      cfg.push(`  <metadata type="object" key="name" value="${xmlEscape(co.name)}"/>\n`);
+      for (const r of co.ranges) {
+        cfg.push(`  <volume firstid="${r.firstid}" lastid="${r.lastid}">\n`);
+        cfg.push(`   <metadata type="volume" key="name" value="${xmlEscape(r.type === "ModelPart" ? co.name : (r.name || co.name))}"/>\n`);
+        cfg.push(`   <metadata type="volume" key="volume_type" value="${r.type}"/>\n`);
+        if (r.extruder > 0) cfg.push(`   <metadata type="volume" key="extruder" value="${r.extruder}"/>\n`);
+        cfg.push('   <metadata type="volume" key="matrix" value="1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"/>\n');
+        cfg.push('   <mesh edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/>\n');
+        cfg.push("  </volume>\n");
+      }
+      cfg.push(" </object>\n");
+    }
   }
   cfg.push("</config>\n");
 
@@ -966,10 +1131,84 @@ function buildPrusa3MF(model, plan) {
       data: te.encode('<?xml version="1.0" encoding="UTF-8"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n <Relationship Target="/3D/3dmodel.model" Id="rel-1" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>\n</Relationships>\n'),
     },
     { name: "3D/3dmodel.model", data: te.encode(modelXml) },
-    { name: "Metadata/Slic3r_PE_model.config", data: te.encode(cfg.join("")) },
+    { name: bambu ? "Metadata/model_settings.config" : "Metadata/Slic3r_PE_model.config", data: te.encode(cfg.join("")) },
   ];
 
-  if (plan.virtuals && plan.virtuals.length) {
+  // bbs: MINIMALES project_settings.config — nur die gemappten Slot-Farben + Versions-
+  // Kontext, KEINE Preset-/Prozess-Keys und (bis Stufe 2/3) keine mixed_*-Keys.
+  // Grund: Ohne project_settings zeigt Bambu Studio beim "Als Projekt öffnen" den
+  // irreführenden "generated by old Bambu Studio, load geometry data only"-Dialog
+  // (Plater.cpp: load_config && config_loaded.empty()) und Filamentfarben fehlen.
+  // Wie viel eine Minimal-Config an Nutzer-Presets überschreibt, klärt Gate S1b.
+  if (bambu) {
+    const psJson = {
+      version: bbsApp.replace(/^BambuStudio-/, ""),
+      from: "project",
+      filament_colour: plan.physical.map((p) => p.color),
+    };
+    if (bsMix && plan.virtuals && plan.virtuals.length) {
+      // Bambu: Mischfarbe = zusätzlicher Filament-Slot derselben Liste (SpeedBoat-Ground-
+      // Truth): filament_colour bekommt die Vorhersagefarbe, per-Slot-Arrays markieren
+      // Komponenten (1-basiert, "1,2[,3]") und Sublayer-Ratios (Summe 1.0, 4 Nachkomma-
+      // stellen). Painting-States zeigen direkt auf diese Slot-Indizes — deshalb müssen
+      // die virtuellen IDs lückenlos hinter den physischen liegen (Prüfung unten).
+      // Gradient-Arrays leer/aus, enable_mixed_color_sublayer bewusst NICHT gesetzt
+      // (Prozess-Key, bleibt Preset-Sache — Minimal-Config-Prinzip).
+      const P = plan.physical.length;
+      const virt = [...plan.virtuals].sort((a, b) => a.id - b.id);
+      const pad = (fill, mixVal) => [...Array(P).fill(fill), ...virt.map(mixVal)];
+      virt.forEach((v, k) => {
+        if (v.id !== P + k + 1) throw new Error(`Mix-ID-Lücke: virtueller Extruder ${v.id} erwartet ${P + k + 1}`);
+        if (v.components.some((c) => c.extruder < 1 || c.extruder > P)) throw new Error("Mix-Komponente außerhalb der physischen Slots");
+      });
+      const ratioStr = (comps) => {
+        const sum = comps.reduce((s, c) => s + c.ratio, 0);
+        const parts = comps.map((c) => (c.ratio / sum).toFixed(4));
+        const rest = (1 - parts.slice(0, -1).reduce((s, x) => s + parseFloat(x), 0)).toFixed(4);
+        return [...parts.slice(0, -1), rest].join(",");
+      };
+      psJson.filament_colour = [...plan.physical.map((p) => p.color), ...virt.map((v) => v.color)];
+      psJson.filament_is_mixed = pad("0", () => "1");
+      psJson.filament_mixed_components = pad("", (v) => v.components.map((c) => c.extruder).join(","));
+      psJson.filament_mixed_sublayer_ratios = pad("", (v) => ratioStr(v.components));
+      psJson.filament_mixed_gradient = pad("0", () => "0");
+      psJson.filament_mixed_gradient_curve = pad("", () => "");
+      psJson.filament_mixed_gradient_per_part = pad("0", () => "0");
+      psJson.filament_mixed_gradient_range = pad("", () => "");
+    }
+    if (smMix && plan.virtuals && plan.virtuals.length) {
+      // mixed_filament_definitions (MixedFilament.cpp serialize_custom_entries, v2.3.5):
+      // Zeile = a,b,enabled,custom,mix_b_percent,pointillism,g<ids>,w<weights>,m<mode>,
+      // z0,xa0,xb0,d0,o0,u<stable_id>,cm<ui_mode>. Mix-Filament-ID beim Import =
+      // num_physical + (enabled-Index in Definitionsreihenfolge) → Definitionen MÜSSEN
+      // nach virtueller ID sortiert sein und alle enabled/nicht-deleted bleiben.
+      // 2 Komponenten: Modus m2 (Simple) + mix_b_percent (Ground Truth Platypus).
+      // 3 Komponenten: g=/-separierte IDs + w=Gewichte, Modus m0 (LayerCycle) —
+      // resolve() nutzt den g/w-Pfad nur bei !Simple && ids>=3 (MixedFilament.cpp).
+      const P = plan.physical.length;
+      const defs = [...plan.virtuals].sort((a, b) => a.id - b.id).map((v, k) => {
+        if (v.id !== P + k + 1) throw new Error(`Mix-ID-Lücke: virtueller Extruder ${v.id} erwartet ${P + k + 1}`);
+        const comps = v.components;
+        if (comps.some((c) => c.extruder < 1 || c.extruder > P)) throw new Error("Mix-Komponente außerhalb der physischen Slots");
+        const a = comps[0].extruder, b = comps[1].extruder;
+        let pct = 50, mode = 2, g = "", w = "";
+        if (comps.length === 2) {
+          pct = Math.round(100 * comps[1].ratio / (comps[0].ratio + comps[1].ratio));
+        } else {
+          mode = 0;
+          g = comps.map((c) => c.extruder).join("/");
+          w = comps.map((c) => c.ratio).join("/");
+        }
+        return `${a},${b},1,1,${pct},0,g${g},w${w},m${mode},z0,xa0,xb0,d0,o0,u${k + 1},cm0`;
+      });
+      psJson.mixed_filament_definitions = defs.join(";");
+    }
+    entries.push({ name: "Metadata/project_settings.config", data: te.encode(JSON.stringify(psJson, null, 4)) });
+  }
+
+  // full_spectrum.json ist Prusa-only (bbs-Mix-Einbettung folgt in Stufe 2/3 über die
+  // Minimal-Config oben).
+  if (!bambu && plan.virtuals && plan.virtuals.length) {
     const fsJson = {
       version: 1,
       physical_extruders: plan.physical.map((p, i) => ({ id: i + 1, color: p.color })),
@@ -984,8 +1223,10 @@ function buildPrusa3MF(model, plan) {
   }
   return { entries, mmVersion, maxState };
 }
+// Legacy-Alias (Testskript, Release-Gate): Prusa-Ausgabe bleibt byte-identisch
+function buildPrusa3MF(model, plan) { return build3MF(model, { ...plan, target: "prusa" }); }
 
-const PaintPortCore = { version: PAINTPORT_VERSION, unzipAll, zipAll, load3MF, buildPrusa3MF, remapPaintString, parsePaintTree, emitPaintTree, collectStates, deltaE, bestMix, topMixes, predictMix, normalizeHex, parseTransform, applyTransform, hexToRgb };
+const PaintPortCore = { version: PAINTPORT_VERSION, unzipAll, zipAll, load3MF, build3MF, buildPrusa3MF, remapPaintString, parsePaintTree, emitPaintTree, collectStates, deltaE, bestMix, topMixes, predictMix, normalizeHex, parseTransform, applyTransform, hexToRgb };
 if (typeof globalThis !== "undefined") globalThis.PaintPortCore = PaintPortCore;
 /*CORE-END*/
 </script>
@@ -1000,23 +1241,25 @@ $("verBadge").textContent = "v" + PaintPortCore.version;
 // ---------- i18n ----------
 const I18N = {
   de: {
-    "app.title": "PaintPort — Bemalte 3MFs für PrusaSlicer · von perspektive3D",
-    "app.subtitle": 'Bemalte Bambu-/MakerWorld-3MF-Dateien für <b>PrusaSlicer 2.9.6+</b> (Prusa Core One INDX) umwandeln: Filamente den INDX-Slots zuordnen, fehlende Farben optional als ColorMix-Mischung (virtueller Extruder). Läuft komplett lokal im Browser.',
+    "app.title": "PaintPort — Bemalte 3MFs für PrusaSlicer, Bambu Studio & Snapmaker Orca · von perspektive3D",
+    "app.subtitle": 'Bemalte 3MF-Dateien umziehen und Filamente den eigenen Spulen zuordnen — Ziel: <b>PrusaSlicer</b> (Core One INDX, inkl. ColorMix-Mischfarben), <b>Bambu Studio</b> oder <b>Snapmaker Orca / OrcaSlicer</b>. Läuft komplett lokal im Browser.',
     "drop.label": '<strong>3MF hierher ziehen</strong> oder klicken — Bambu Studio / MakerWorld / OrcaSlicer / PrusaSlicer',
     "step.analyse": "1 · Analyse",
-    "step.slots": "2 · INDX-Spulen (physische Toolheads)",
-    "step.map": "3 · Zuordnung Modellfarben → INDX",
+    "step.slots": "2 · Filament-Slots (Spulen am Drucker)",
+    "step.map": "3 · Zuordnung Modellfarben → Slots",
     "step.export": "5 · Export",
     "preview.title": "4 · Vorschau",
     "preview.original": "Original (Datei)",
-    "preview.result": "Ergebnis (INDX)",
+    "preview.result": "Ergebnis (gemappt)",
     "preview.hint": "Farbeindruck: dominanter Paint-State pro Dreieck; Negativ-/Modifier-Volumes sind ausgeblendet. Ziehen = drehen · Rad = zoomen · Shift/Rechtsklick-Ziehen = verschieben.",
     "preview.building": "Baue 3D-Vorschau …",
     "slots.printerN": "Drucker-Extruderzahl:",
     "slots.printerHint": "Core One INDX 8T = 8. Virtuelle ColorMix-Extruder bekommen IDs oberhalb dieser Zahl.",
+    "slots.printerHintBambu": "Bambu-AMS: bis zu 16 Filament-Slots.",
+    "slots.printerHintU1": "Snapmaker U1 = 4 Toolheads.",
     "slots.presets": "Presets:",
     "slots.allowMix": "ColorMix-Mischungen (virtuelle Extruder) erlauben",
-    "slots.hint": "Trage hier ein, welche Spulenfarbe in welchem INDX-Slot steckt. Nicht bestückte Slots deaktivieren.",
+    "slots.hint": "Trage hier ein, welche Spulenfarbe in welchem Drucker-Slot steckt. Nicht bestückte Slots deaktivieren.",
     "map.colFilament": "Modell-Filament",
     "map.colShare": "Anteil",
     "map.colTarget": "Ziel",
@@ -1027,17 +1270,23 @@ const I18N = {
     "map.optMixCand": "ColorMix-Alternative {i}: {hex} · ΔE {d} ({comps})",
     "map.collision": "⚠ ≈ Filament {n}",
     "map.collisionTip": "Ergebnis fast identisch mit Filament {n} — im Druck nicht unterscheidbar. Anderen Mix-Kandidaten oder Slot wählen.",
-    "map.slotTip": "Tipp: {list} hat/haben keinen guten Mix (ΔE > 40). {free} INDX-Slot(s) sind frei — eine passende echte Spule schlägt jede Mischung.",
+    "map.slotTip": "Tipp: {list} hat/haben keinen guten Mix (ΔE > 40). {free} Slot(s) sind frei — eine passende echte Spule schlägt jede Mischung.",
     "map.slotDisabled": "Slot deaktiviert!",
     "map.physical": "physisch, ΔE {d}",
     "map.noMix": "keine Mischung möglich",
     "map.mixDetail": '<b>{comps}</b>, Vorhersage {hex}, ΔE {d}',
+    "export.target": "Ziel-Slicer:",
     "export.btn": "3MF für PrusaSlicer exportieren",
+    "export.btnBambu": "3MF für Bambu Studio exportieren",
+    "export.btnSnapmaker": "3MF für Snapmaker Orca exportieren",
     "export.hint": 'Ausgabe in PrusaSlicer 2.9.6+ <b>als Projekt öffnen</b> (Datei → Öffnen; beim Drag&amp;Drop im Dialog „Als Projekt öffnen" wählen — nur dann lädt PrusaSlicer die virtuellen Extruder und Slot-Farben). Drucker: Core One INDX. ColorMix-Zuordnungen sind experimentell.',
-    "export.noSlot": "Kein aktiver INDX-Slot.",
-    "export.building": "Baue PrusaSlicer-3MF …",
+    "export.hintBbs": 'Ausgabe in Bambu Studio <b>als Projekt öffnen</b> (beim Drag&amp;Drop „Projekt" wählen) — Painting, Slot-Farben UND ColorMix-Mischfarben kommen mit (Mischfarben erscheinen als zusätzliche „Mixed Filament"-Slots; physisch + Mixe max. 16). Achtung: MakerWorld akzeptiert keine Mixed-3MFs zum Upload. Der Projekt-Modus kann Voreinstellungen zurücksetzen — Profile danach kurz prüfen.',
+    "export.hintSnapmaker": 'Ausgabe in Snapmaker Orca <b>als Projekt öffnen</b> (beim Drag&amp;Drop „Projekt" wählen) — Painting, Slot-Farben UND ColorMix-Mischfarben kommen mit (Mischfarben erscheinen als zusätzliche Filamente hinter den physischen, „Full Spectrum"). Getestet mit Snapmaker Orca 2.3.5 — das Mix-Format ist versionslos, bei neuen Orca-Versionen kann es brechen. Der Projekt-Modus kann Voreinstellungen zurücksetzen — Profile danach kurz prüfen.',
+    "export.noSlot": "Kein aktiver Slot.",
+    "export.building": "Baue Export-3MF …",
     "export.vnote": " · {n} virtuelle(r) ColorMix-Extruder (IDs ab {from}, experimentell)",
     "export.done": 'Export fertig: {file} · MmPaintingVersion {mmv}{vnote}\nIn PrusaSlicer 2.9.6+ ALS PROJEKT öffnen (Datei → Öffnen bzw. beim Drag&Drop „Als Projekt öffnen" wählen — sonst werden virtuelle Extruder & Farben verworfen). Drucker mit {p} Extrudern — Spulen: {spools}',
+    "export.doneBbs": 'Export fertig: {file}\nIn Bambu Studio / Snapmaker Orca ALS PROJEKT öffnen — Painting + Slot-Farben kommen mit (Profile danach kurz prüfen). Drucker mit {p} Extrudern — Spulen: {spools}',
     "export.error": "Export-Fehler: {msg}",
     "preset.tooMany": "Preset {id} hat {have} Farben, Drucker nur {n} Extruder — nur die ersten {n} übernommen.",
     "status.reading": "Lese {name} …",
@@ -1055,17 +1304,17 @@ const I18N = {
     "footer.credits": 'Dank an: <a href="https://github.com/3DRev/Primed3D" target="_blank">Primed3D</a> von Josh / 3D Revolution (Apache-2.0 — Pionierarbeit &amp; 3MF-Painting-Referenz) und <a href="https://github.com/prusa3d/PrusaSlicer" target="_blank">PrusaSlicer</a> (AGPL-3.0 — Formatreferenz für <code>slic3rpe:mmu_segmentation</code> und Full-Spectrum-JSON). Es wird kein Code dieser Projekte ausgeliefert; Formate wurden zur Interoperabilität nachimplementiert.',
     "footer.changelog": "Changelog",
     "footer.terms": "Nutzung & Datenschutz",
-    "help.tagline": "Bemalte Bambu-/MakerWorld-Modelle mit den richtigen Farben auf dem Prusa Core One INDX drucken — komplett lokal im Browser.",
+    "help.tagline": "Bemalte Bambu-/MakerWorld-Modelle mit den richtigen Farben auf deinem Drucker — Ziel: PrusaSlicer (Core One INDX), Bambu Studio oder Snapmaker Orca, inkl. ColorMix-Mischfarben. Komplett lokal im Browser.",
     "help.quickstart": "Quickstart",
     "help.step1": "Bemalte 3MF (Bambu Studio / MakerWorld / OrcaSlicer) in das Feld oben ziehen.",
-    "help.step2": "Eintragen, welche Spulenfarbe in welchem INDX-Slot steckt (oder ein Preset wählen).",
+    "help.step2": "Eintragen, welche Spulenfarbe in welchem Drucker-Slot steckt (oder ein Preset wählen).",
     "help.step3": "„Auto-Zuordnung“ klicken und das Ergebnis prüfen — fehlende Farben werden optional als ColorMix gemischt.",
-    "help.step4": "Exportieren und die Datei in PrusaSlicer 2.9.6+ öffnen.",
-    "help.projectWarn": '<b>Wichtig:</b> Die exportierte 3MF in PrusaSlicer <b>als Projekt öffnen</b> (Datei → Öffnen bzw. beim Drag&amp;Drop „Als Projekt öffnen" wählen). Sonst verwirft PrusaSlicer die virtuellen Extruder und Slot-Farben kommentarlos.',
+    "help.step4": "Ziel-Slicer wählen, exportieren und die Datei dort als Projekt öffnen.",
+    "help.projectWarn": '<b>Wichtig:</b> Die exportierte 3MF im Ziel-Slicer <b>als Projekt öffnen</b> (Datei → Öffnen bzw. beim Drag&amp;Drop „Projekt" wählen). Sonst gehen ColorMix-Mischfarben und Slot-Farben verloren — das Painting selbst bleibt erhalten.',
     "help.channels": "Mehr von perspektive3D",
     "help.getStarted": "Los geht's 🚀",
     "thanks.title": "Export fertig — danke, dass du PaintPort nutzt! 🎉",
-    "thanks.body": 'Denk dran: die Datei in PrusaSlicer <b>als Projekt öffnen</b>. Wenn dir PaintPort hilft, freue ich mich über ein Abo — dort zeige ich auch, wie solche Tools entstehen.',
+    "thanks.body": 'Denk dran: die Datei im Ziel-Slicer <b>als Projekt öffnen</b>. Wenn dir PaintPort hilft, freue ich mich über ein Abo — dort zeige ich auch, wie solche Tools entstehen.',
     "thanks.subDe": "▶ perspektive3D abonnieren (DE)",
     "thanks.subEn": "▶ Subscribe p3d-intl (EN)",
     "terms.title": "Nutzung & Datenschutz",
@@ -1085,25 +1334,29 @@ const I18N = {
     "err.ERR_NO_MODEL": "3D/3dmodel.model fehlt — keine gültige 3MF-Datei.",
     "err.ERR_MISSING_REF": "Referenzierte Modelldatei fehlt im Archiv: {detail}",
     "err.ERR_NO_OBJECTS": "Keine druckbaren Objekte in der Datei gefunden.",
+    "err.ERR_BBS_NO_MIX": "Interner Fehler: ColorMix-Export ohne Zielformat.",
+    "err.ERR_BBS_MAX16": "Bambu Studio unterstützt maximal 16 Filamente — Drucker-Extruderzahl verringern oder weniger Mischfarben verwenden.",
   },
   en: {
-    "app.title": "PaintPort — Painted 3MF Converter for PrusaSlicer · by perspektive3D",
-    "app.subtitle": 'Convert painted Bambu/MakerWorld 3MF files for <b>PrusaSlicer 2.9.6+</b> (Prusa Core One INDX): map the model filaments to your INDX slots, optionally recreate missing colors as ColorMix blends (virtual extruders). Runs entirely locally in your browser.',
+    "app.title": "PaintPort — Painted 3MF Converter for PrusaSlicer, Bambu Studio & Snapmaker Orca · by perspektive3D",
+    "app.subtitle": 'Re-home painted 3MF files and map the model filaments to your own spools — target: <b>PrusaSlicer</b> (Core One INDX, incl. ColorMix blends), <b>Bambu Studio</b> or <b>Snapmaker Orca / OrcaSlicer</b>. Runs entirely locally in your browser.',
     "drop.label": '<strong>Drop a 3MF here</strong> or click — Bambu Studio / MakerWorld / OrcaSlicer / PrusaSlicer',
     "step.analyse": "1 · Analysis",
-    "step.slots": "2 · INDX spools (physical toolheads)",
-    "step.map": "3 · Map model colors → INDX",
+    "step.slots": "2 · Filament slots (spools on the printer)",
+    "step.map": "3 · Map model colors → slots",
     "step.export": "5 · Export",
     "preview.title": "4 · Preview",
     "preview.original": "Original (file)",
-    "preview.result": "Result (INDX)",
+    "preview.result": "Result (mapped)",
     "preview.hint": "Color impression: dominant paint state per triangle; negative/modifier volumes are hidden. Drag = rotate · wheel = zoom · shift/right-drag = pan.",
     "preview.building": "Building 3D preview …",
     "slots.printerN": "Printer extruder count:",
     "slots.printerHint": "Core One INDX 8T = 8. Virtual ColorMix extruders get IDs above this number.",
+    "slots.printerHintBambu": "Bambu AMS: up to 16 filament slots.",
+    "slots.printerHintU1": "Snapmaker U1 = 4 toolheads.",
     "slots.presets": "Presets:",
     "slots.allowMix": "Allow ColorMix blends (virtual extruders)",
-    "slots.hint": "Enter which spool color sits in which INDX slot. Disable slots that are not loaded.",
+    "slots.hint": "Enter which spool color sits in which printer slot. Disable slots that are not loaded.",
     "map.colFilament": "Model filament",
     "map.colShare": "Share",
     "map.colTarget": "Target",
@@ -1114,17 +1367,23 @@ const I18N = {
     "map.optMixCand": "ColorMix alternative {i}: {hex} · ΔE {d} ({comps})",
     "map.collision": "⚠ ≈ filament {n}",
     "map.collisionTip": "Result almost identical to filament {n} — indistinguishable in the print. Pick another mix candidate or slot.",
-    "map.slotTip": "Tip: {list} has/have no good mix (ΔE > 40). {free} INDX slot(s) are free — a real matching spool beats any blend.",
+    "map.slotTip": "Tip: {list} has/have no good mix (ΔE > 40). {free} slot(s) are free — a real matching spool beats any blend.",
     "map.slotDisabled": "Slot disabled!",
     "map.physical": "physical, ΔE {d}",
     "map.noMix": "no blend possible",
     "map.mixDetail": '<b>{comps}</b>, predicted {hex}, ΔE {d}',
+    "export.target": "Target slicer:",
     "export.btn": "Export 3MF for PrusaSlicer",
+    "export.btnBambu": "Export 3MF for Bambu Studio",
+    "export.btnSnapmaker": "Export 3MF for Snapmaker Orca",
     "export.hint": 'Open the output in PrusaSlicer 2.9.6+ <b>as a project</b> (File → Open; when using drag&amp;drop choose "Open as project" — otherwise PrusaSlicer silently drops the virtual extruders and slot colors). Printer: Core One INDX. ColorMix mappings are experimental.',
-    "export.noSlot": "No active INDX slot.",
-    "export.building": "Building PrusaSlicer 3MF …",
+    "export.hintBbs": 'Open the output in Bambu Studio <b>as a project</b> (choose "project" when drag&amp;dropping) — painting, slot colors AND ColorMix blends carry over (blends appear as extra "mixed filament" slots; physical + blends max 16). Note: MakerWorld does not accept mixed-filament 3MFs for upload. Project mode may reset presets — double-check your profiles afterwards.',
+    "export.hintSnapmaker": 'Open the output in Snapmaker Orca <b>as a project</b> (choose "project" when drag&amp;dropping) — painting, slot colors AND ColorMix blends carry over (blends appear as extra filaments after the physical ones, "Full Spectrum"). Tested with Snapmaker Orca 2.3.5 — the mix format is unversioned and may break with future Orca releases. Project mode may reset presets — double-check your profiles afterwards.',
+    "export.noSlot": "No active slot.",
+    "export.building": "Building export 3MF …",
     "export.vnote": " · {n} virtual ColorMix extruder(s) (IDs from {from}, experimental)",
     "export.done": 'Export done: {file} · MmPaintingVersion {mmv}{vnote}\nOpen it in PrusaSlicer 2.9.6+ AS A PROJECT (File → Open, or choose "Open as project" when drag&dropping — otherwise virtual extruders & colors are discarded). Printer with {p} extruders — spools: {spools}',
+    "export.doneBbs": 'Export done: {file}\nOpen it in Bambu Studio / Snapmaker Orca AS A PROJECT — painting + slot colors carry over (double-check your profiles afterwards). Printer with {p} extruders — spools: {spools}',
     "export.error": "Export error: {msg}",
     "preset.tooMany": "Preset {id} has {have} colors but the printer only has {n} extruders — applied the first {n}.",
     "status.reading": "Reading {name} …",
@@ -1142,17 +1401,17 @@ const I18N = {
     "footer.credits": 'Thanks to: <a href="https://github.com/3DRev/Primed3D" target="_blank">Primed3D</a> by Josh / 3D Revolution (Apache-2.0 — pioneering work &amp; 3MF painting reference) and <a href="https://github.com/prusa3d/PrusaSlicer" target="_blank">PrusaSlicer</a> (AGPL-3.0 — format reference for <code>slic3rpe:mmu_segmentation</code> and the full-spectrum JSON). No code from these projects ships in this tool; the formats were re-implemented for interoperability.',
     "footer.changelog": "Changelog",
     "footer.terms": "Terms & Privacy",
-    "help.tagline": "Print painted Bambu/MakerWorld models with the right colors on the Prusa Core One INDX — entirely local, in your browser.",
+    "help.tagline": "Print painted Bambu/MakerWorld models with the right colors on your printer — target PrusaSlicer (Core One INDX), Bambu Studio or Snapmaker Orca, incl. ColorMix blends. Entirely local, in your browser.",
     "help.quickstart": "Quickstart",
     "help.step1": "Drop a painted 3MF (Bambu Studio / MakerWorld / OrcaSlicer) into the field above.",
-    "help.step2": "Enter which spool color sits in which INDX slot (or pick a preset).",
+    "help.step2": "Enter which spool color sits in which printer slot (or pick a preset).",
     "help.step3": 'Click "Auto-map" and review the result — missing colors can optionally be recreated as ColorMix blends.',
-    "help.step4": "Export and open the file in PrusaSlicer 2.9.6+.",
-    "help.projectWarn": '<b>Important:</b> Open the exported 3MF in PrusaSlicer <b>as a project</b> (File → Open, or choose "Open as project" when drag&amp;dropping). Otherwise PrusaSlicer silently discards the virtual extruders and slot colors.',
+    "help.step4": "Pick the target slicer, export, and open the file there as a project.",
+    "help.projectWarn": '<b>Important:</b> Open the exported 3MF in the target slicer <b>as a project</b> (File → Open, or choose "project" when drag&amp;dropping). Otherwise ColorMix blends and slot colors are lost — the painting itself survives.',
     "help.channels": "More from perspektive3D",
     "help.getStarted": "Get started 🚀",
     "thanks.title": "Export done — thanks for using PaintPort! 🎉",
-    "thanks.body": 'Remember: open the file in PrusaSlicer <b>as a project</b>. If PaintPort helps you, consider subscribing — that is also where I show how tools like this are built.',
+    "thanks.body": 'Remember: open the file in the target slicer <b>as a project</b>. If PaintPort helps you, consider subscribing — that is also where I show how tools like this are built.',
     "thanks.subDe": "▶ Subscribe perspektive3D (German)",
     "thanks.subEn": "▶ Subscribe p3d-intl (English)",
     "terms.title": "Terms & Privacy",
@@ -1172,6 +1431,8 @@ const I18N = {
     "err.ERR_NO_MODEL": "3D/3dmodel.model missing — not a valid 3MF file.",
     "err.ERR_MISSING_REF": "Referenced model file missing from archive: {detail}",
     "err.ERR_NO_OBJECTS": "No printable objects found in the file.",
+    "err.ERR_BBS_NO_MIX": "Internal error: ColorMix export without a target mix format.",
+    "err.ERR_BBS_MAX16": "Bambu Studio supports at most 16 filaments — reduce the printer extruder count or use fewer blends.",
   },
 };
 const store = {
@@ -1218,6 +1479,29 @@ let FILE_NAME = "";
 function printerCount() {
   const el = $("printerN");
   return Math.min(16, Math.max(1, parseInt(el && el.value, 10) || 8));
+}
+
+// Ziel-Slicer: prusa = INDX-Projekt (mit ColorMix), bambu/snapmaker = bbs-Flavor Modus A
+// (nur Painting, Drag&Drop-sicher; ColorMix folgt mit Stufe 2/3)
+// bbsApp = Application-Metadata/file_version des Exports — an die Version des
+// Ziel-Slicers gepinnt (Ground Truth 07/2026; bei Slicer-Releases nachziehen)
+const TARGETS = {
+  prusa:     { flavor: "prusa", suffix: "_INDX",      printerN: 8,  mix: true,  btn: "export.btn",          hint: "export.hint",    printerHint: "slots.printerHint" },
+  bambu:     { flavor: "bambu", suffix: "_bambu",     printerN: 16, mix: true,  btn: "export.btnBambu",     hint: "export.hintBbs", printerHint: "slots.printerHintBambu", bbsApp: "BambuStudio-02.07.01.62", mixFormat: "bambu" },
+  snapmaker: { flavor: "bambu", suffix: "_snapmaker", printerN: 4,  mix: true,  btn: "export.btnSnapmaker", hint: "export.hintSnapmaker", printerHint: "slots.printerHintU1", bbsApp: "BambuStudio-2.3.5", mixFormat: "snapmaker" },
+};
+function currentTarget() { const el = $("exportTarget"); return TARGETS[el ? el.value : "prusa"] || TARGETS.prusa; }
+function onTargetChange() {
+  const tgt = currentTarget();
+  $("printerN").value = tgt.printerN;
+  const mix = $("allowMix");
+  mix.disabled = !tgt.mix;
+  mix.checked = tgt.mix;
+  $("btnExport").dataset.i18n = tgt.btn; $("btnExport").textContent = t(tgt.btn);
+  $("exportHint").dataset.i18nHtml = tgt.hint; $("exportHint").innerHTML = t(tgt.hint);
+  $("printerHint").dataset.i18n = tgt.printerHint; $("printerHint").textContent = t(tgt.printerHint);
+  renderSlots();
+  renderMapping();
 }
 
 const drop = $("drop"), fi = $("fi");
@@ -1509,23 +1793,32 @@ async function doExport() {
       const el = $("slotHex" + s);
       physical.push({ slot: s, color: el ? el.value : "#808080" });
     }
+    const tgt = currentTarget();
     const plan = {
+      target: tgt.flavor,
+      bbsApp: tgt.bbsApp,
+      mixFormat: tgt.mixFormat,
       stateMap,
       physical,
       virtuals,
-      title: FILE_NAME + " (INDX)",
+      title: FILE_NAME + (tgt.flavor === "prusa" ? " (INDX)" : " (PaintPort)"),
       date: new Date().toISOString().slice(0, 10),
     };
-    const { entries, mmVersion } = PaintPortCore.buildPrusa3MF(MODEL, plan);
+    const { entries, mmVersion } = PaintPortCore.build3MF(MODEL, plan);
     const zipBytes = await PaintPortCore.zipAll(entries);
     const blob = new Blob([zipBytes], { type: "model/3mf" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = FILE_NAME + "_INDX.3mf";
+    a.download = FILE_NAME + tgt.suffix + ".3mf";
     a.click();
     URL.revokeObjectURL(a.href);
-    const vNote = virtuals.length ? t("export.vnote", { n: virtuals.length, from: P + 1 }) : "";
-    setStatus(t("export.done", { file: a.download, mmv: mmVersion, vnote: vNote, p: P, spools: slots.map((s) => `Slot ${s.slot}=${s.color}`).join(", ") }), "ok");
+    const spools = slots.map((s) => `Slot ${s.slot}=${s.color}`).join(", ");
+    if (tgt.flavor === "prusa") {
+      const vNote = virtuals.length ? t("export.vnote", { n: virtuals.length, from: P + 1 }) : "";
+      setStatus(t("export.done", { file: a.download, mmv: mmVersion, vnote: vNote, p: P, spools }), "ok");
+    } else {
+      setStatus(t("export.doneBbs", { file: a.download, p: P, spools }), "ok");
+    }
     if (!THANKS_SHOWN) { THANKS_SHOWN = true; setTimeout(() => openModal("thanksModal"), 1500); }
   } catch (err) {
     console.error(err);
