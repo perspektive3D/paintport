@@ -17,7 +17,7 @@ Slicer können die Dreiecks-*Bemalung* der jeweils anderen lesen — aber nicht 
 1. PaintPort öffnen und eine bemalte 3MF hineinziehen (Bambu Studio / MakerWorld / OrcaSlicer).
 2. Eintragen, welche Spulenfarbe in welchem Drucker-Slot steckt — oder ein Preset wählen (CMY, WCMY, KCMY, WKCMY, WKCMYRGB).
 3. **Auto-Zuordnung** klicken und das Ergebnis prüfen. Farben ohne passende Spule können als ColorMix gemischt werden.
-4. Ziel-Slicer wählen (PrusaSlicer / Bambu Studio / Snapmaker Orca) und exportieren.
+4. Ziel-Slicer wählen (PrusaSlicer / Bambu Studio / Snapmaker Orca) und exportieren — der Dateiname trägt Ziel und Farbmodus (z.B. `modell_INDX_WKCMY.3mf`, bzw. `_5T` bei manuellem 5-Slot-Setup).
 5. **Die Datei im Ziel-Slicer *als Projekt öffnen*** (Datei → Öffnen; beim Drag&Drop „Projekt" wählen).
 
 > ⚠️ **Das „als Projekt" ist entscheidend.** Als reine Geometrie importiert bleibt das Painting erhalten, aber ColorMix-Mischfarben und Slot-Farben gehen verloren. Der Projekt-Modus kann deine aktiven Presets gegen Projekt-Platzhalter tauschen — zurückwechseln behält die Farben.

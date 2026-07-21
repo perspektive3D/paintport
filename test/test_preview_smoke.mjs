@@ -84,7 +84,7 @@ const smoke = `
     let blob = null;
     URL.createObjectURL = (b) => { blob = b; return "blob:smoke"; };
     URL.revokeObjectURL = () => {};
-    HTMLAnchorElement.prototype.click = function () {};
+    HTMLAnchorElement.prototype.click = function () { R.lastDownload = this.download || R.lastDownload; };
     await doExport();
     if (!blob) throw new Error("Export hat keinen Blob erzeugt");
     const files = await PaintPortCore.unzipAll(new Uint8Array(await blob.arrayBuffer()));
@@ -121,6 +121,20 @@ const smoke = `
       !bbsNames.includes("Metadata/Prusa_Slicer_full_spectrum.json") &&
       !!bbsPs && Array.isArray(bbsPs.filament_colour) && bbsPs.filament_colour.length === 4 &&
       new TextDecoder().decode(bbsEntries.find((e) => e.name === "3D/3dmodel.model").data).includes("BambuStudio-2.3.5");
+    // --- 7) Farbmodus-Suffix (Issue #1) + Reset-Button (Issue #2) ---
+    // Snapmaker-Export oben lief mit 4 Default-Slots (kein Preset) → _snapmaker_4T
+    // (deckt die Dateinamens-Komposition in doExport ab). Preset-Erkennung danach
+    // OHNE zweiten Export prüfen — jeder weitere zipAll-Lauf (echte Async-I/O)
+    // reißt das virtual-time-budget (s. Kommentar oben).
+    R.suffixManual = (R.lastDownload || "").endsWith("_snapmaker_4T.3mf");
+    applyPreset(0); // CMY (3 Farben ≤ 4 Slots)
+    R.suffixPreset = colorModeSuffix() === "_CMY";
+    const resetBtn = document.querySelector('[data-i18n="reset.btn"]');
+    let confirmAsked = false;
+    window.confirm = () => { confirmAsked = true; return false; }; // false → KEIN Reload im Test
+    if (resetBtn) resetBtn.click();
+    R.resetOk = !!resetBtn && confirmAsked;
+
     document.getElementById("exportTarget").value = "prusa";
     onTargetChange();
 
@@ -130,7 +144,8 @@ const smoke = `
            R.exportVirtualMatches === true &&
            R.targetPrinterN === "4" && R.bambuPrinterN === "16" &&
            R.bambuMixEnabled === true && R.targetMixEnabled === true &&
-           R.targetBtn.includes("Snapmaker") && R.bbsExportOk === true;
+           R.targetBtn.includes("Snapmaker") && R.bbsExportOk === true &&
+           R.suffixManual === true && R.suffixPreset === true && R.resetOk === true;
   } catch (e) { R.error = String(e && e.stack || e); }
   document.title = "RESULT:" + JSON.stringify(R);
 })();

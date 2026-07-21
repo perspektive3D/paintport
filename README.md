@@ -17,7 +17,7 @@ Slicers can read each other's triangle *painting* — but not its *meaning*: the
 1. Open PaintPort and drop in a painted 3MF (Bambu Studio / MakerWorld / OrcaSlicer export).
 2. Enter which spool color sits in which printer slot — or pick a preset (CMY, WCMY, KCMY, WKCMY, WKCMYRGB).
 3. Click **Auto-map** and review the result. Colors without a close spool match can be blended as ColorMix.
-4. Pick the target slicer (PrusaSlicer / Bambu Studio / Snapmaker Orca) and export.
+4. Pick the target slicer (PrusaSlicer / Bambu Studio / Snapmaker Orca) and export — the filename carries the target and your color mode (e.g. `model_INDX_WKCMY.3mf`, or `_5T` for a manual 5-slot setup).
 5. **Open the file in the target slicer *as a project*** (File → Open, or choose "project" when drag & dropping).
 
 > ⚠️ **The "as a project" part matters.** Imported as geometry only, the painting survives but ColorMix blends and slot colors are discarded. Project mode may swap your active presets for project placeholders — switching back keeps the colors.

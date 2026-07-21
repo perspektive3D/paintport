@@ -2,6 +2,17 @@
 
 All notable changes to PaintPort. Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [0.7.1] — 2026-07-21
+
+### Added
+- **Color-mode filename suffix** (#1): exports now append the active spool setup to the
+  filename — the preset id when the slots exactly match a preset (`pika_INDX_WKCMY.3mf`),
+  otherwise the number of active slots (`pika_snapmaker_5T.3mf`). Detection is dynamic,
+  so editing a preset afterwards falls back to the slot-count suffix automatically.
+- **Reset button** (#2): a button at the bottom of the page clears the whole session
+  (loaded model, slot configuration, mapping, preview) after a confirmation prompt and
+  returns the tool to its initial state. Language and theme are kept.
+
 ## [0.7.0] — 2026-07-20
 
 ### Added
