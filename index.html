@@ -224,6 +224,7 @@ body.dark .warnbox{background:var(--koralle);color:var(--warmweiss)}
     <button id="btnExport" onclick="doExport()" data-i18n="export.btn">3MF für PrusaSlicer exportieren</button>
     <span class="hint" style="margin-top:0" id="exportHint" data-i18n-html="export.hint">Ausgabe in PrusaSlicer 2.9.6+ <b>als Projekt öffnen</b> (Datei → Öffnen; beim Drag&amp;Drop im Dialog „Als Projekt öffnen" wählen — nur dann lädt PrusaSlicer die virtuellen Extruder und Slot-Farben). Drucker: Core One INDX. ColorMix-Zuordnungen sind experimentell.</span>
   </div>
+  <div class="warnbox hidden" id="limitWarn" style="margin-top:10px"></div>
 </div>
 
 <div class="card" style="text-align:center">
@@ -300,7 +301,7 @@ Es wird kein Code dieser Projekte ausgeliefert; Formate wurden zur Interoperabil
 // ============================================================
 "use strict";
 
-const PAINTPORT_VERSION = "0.7.1"; // einzige Versions-Quelle (UI-Badge + Generator-Metadata)
+const PAINTPORT_VERSION = "0.7.2"; // einzige Versions-Quelle (UI-Badge + Generator-Metadata)
 
 // Core-Fehler: englische Message + stabiler err.code (UI übersetzt via I18N "err.<code>")
 const CORE_ERRORS = {
@@ -1279,6 +1280,8 @@ const I18N = {
     "map.physical": "physisch, ΔE {d}",
     "map.noMix": "keine Mischung möglich",
     "map.mixDetail": '<b>{comps}</b>, Vorhersage {hex}, ΔE {d}',
+    "map.remapped": "Zuordnung angepasst: {list} zeigte(n) auf einen entfallenen Slot und wurde(n) auf die beste Alternative gesetzt — Mapping kurz prüfen.",
+    "export.limitWarn": "Bambu-Limit überschritten: {total} Filamente (Slots bis zum höchsten aktiven + Mischfarben) > 16 — der Export bricht so ab. Hohe Slots deaktivieren oder Mischungen reduzieren.",
     "export.target": "Ziel-Slicer:",
     "export.btn": "3MF für PrusaSlicer exportieren",
     "export.btnBambu": "3MF für Bambu Studio exportieren",
@@ -1378,6 +1381,8 @@ const I18N = {
     "map.physical": "physical, ΔE {d}",
     "map.noMix": "no blend possible",
     "map.mixDetail": '<b>{comps}</b>, predicted {hex}, ΔE {d}',
+    "map.remapped": "Mapping adjusted: {list} pointed at a removed slot and was moved to the best alternative — please review the mapping.",
+    "export.limitWarn": "Bambu limit exceeded: {total} filaments (slots up to the highest active one + blends) > 16 — the export will fail like this. Disable high slots or reduce blends.",
     "export.target": "Target slicer:",
     "export.btn": "Export 3MF for PrusaSlicer",
     "export.btnBambu": "Export 3MF for Bambu Studio",
@@ -1504,7 +1509,7 @@ function onTargetChange() {
   $("printerN").value = tgt.printerN;
   const mix = $("allowMix");
   mix.disabled = !tgt.mix;
-  mix.checked = tgt.mix;
+  if (!tgt.mix) mix.checked = false; // Nutzerwahl bei erlaubtem Mix nicht überschreiben
   $("btnExport").dataset.i18n = tgt.btn; $("btnExport").textContent = t(tgt.btn);
   $("exportHint").dataset.i18nHtml = tgt.hint; $("exportHint").innerHTML = t(tgt.hint);
   $("printerHint").dataset.i18n = tgt.printerHint; $("printerHint").textContent = t(tgt.printerHint);
@@ -1568,15 +1573,15 @@ function renderAnalyse() {
 
 const DEFAULT_SLOTS = ["#FFFFFF", "#000000", "#00FFFF", "#FF00FF", "#FFFF00", "#FF0000", "#00FF00", "#0000FF",
   "#FFA500", "#800080", "#808080", "#8B4513", "#F5F5DC", "#40E0D0", "#FFC0CB", "#556B2F"];
+const SLOT_MEMO = {}; // Slot-Zustand überlebt das Verkleinern der Extruderzahl (Zielwechsel)
 function renderSlots() {
   const host = $("slots");
-  // Bestehende Werte bei Re-Render erhalten
-  const prev = {};
-  host.querySelectorAll("input").forEach((el) => { prev[el.id] = el.type === "checkbox" ? el.checked : el.value; });
+  // Bestehende Werte bei Re-Render erhalten — auch für Slots, die gleich aus dem DOM fallen
+  host.querySelectorAll("input").forEach((el) => { SLOT_MEMO[el.id] = el.type === "checkbox" ? el.checked : el.value; });
   host.innerHTML = "";
   for (let s = 1; s <= printerCount(); s++) {
-    const col = prev["slotHex" + s] || DEFAULT_SLOTS[s - 1] || "#808080";
-    const on = ("slotOn" + s) in prev ? prev["slotOn" + s] : s <= 5;
+    const col = SLOT_MEMO["slotHex" + s] || DEFAULT_SLOTS[s - 1] || "#808080";
+    const on = ("slotOn" + s) in SLOT_MEMO ? SLOT_MEMO["slotOn" + s] : s <= 5;
     const row = document.createElement("div");
     row.className = "slotrow";
     row.innerHTML = `<span class="nr">Slot ${s}</span>
@@ -1677,9 +1682,10 @@ function renderMapping() {
   const prev = {};
   tb.querySelectorAll("select").forEach((sel) => { prev[sel.dataset.fil] = sel.value; });
   tb.innerHTML = "";
+  const remapped = [];
   for (const f of MODEL.filaments) {
     const pct = MODEL.totalTris ? (100 * f.paintedTris / MODEL.totalTris) : 0;
-    const relevant = f.paintedTris > 0 || f.baseTris > 0 || f.isDefaultOf > 0;
+    const relevant = isRelevantFilament(f);
     const tr = document.createElement("tr");
     if (!relevant) tr.style.opacity = ".45";
     const allowMix = $("allowMix").checked && slots.length >= 2;
@@ -1699,35 +1705,65 @@ function renderMapping() {
     const sel = tr.querySelector("select");
     if (prev[f.index]) {
       if ([...sel.options].some((o) => o.value === prev[f.index])) sel.value = prev[f.index];
-      // gepinnter Mix referenziert einen inzwischen deaktivierten Slot → zurück auf Auto
-      else if (prev[f.index].startsWith("mix") && allowMix) sel.value = "mix";
+      else {
+        // Bisheriges Ziel existiert nicht mehr (Slot weggefallen/deaktiviert, Mix-
+        // Komponente weg) → beste Ersatz-Zuordnung statt stillem Rückfall auf die
+        // erste Option (v0.7.1: alles sprang auf den niedrigsten Slot).
+        const v = prev[f.index].startsWith("mix") && allowMix ? "mix" : bestOption(f, slots, allowMix);
+        if (v) sel.value = v;
+        if (relevant && v) remapped.push(f.index);
+      }
     }
   }
+  if (remapped.length) setStatus(t("map.remapped", { list: remapped.map((i) => "Filament " + i).join(", ") }));
   updateResults();
+}
+
+const AUTO_THRESH = 12; // ΔE-Schwelle: darüber lohnt ColorMix
+// Beste Zuordnung für ein Filament (gemeinsame Logik von autoMap + Remap-Fallback
+// in renderMapping): ΔE-nächster aktiver Slot; bei großem Abstand und erlaubtem
+// Mix der beste Mix. Liefert "p<N>", "mix" oder null (kein aktiver Slot).
+function bestOption(f, slots, allowMix) {
+  let best = null;
+  for (const s of slots) {
+    const d = PaintPortCore.deltaE(f.color, s.color);
+    if (!best || d < best.d) best = { d, slot: s.slot };
+  }
+  if (!best) return null;
+  // Basis-Filamente (unbemalte Flächen von Objekten/Parts) und Part-Extruder-Referenzen
+  // immer physisch mappen — ein virtueller Volume-Extruder macht den kompletten
+  // Körper (oder Modifier) zur Mischung.
+  if (f.isDefaultOf > 0 || f.baseTris > 0 || usesPartExtruder(f)) return "p" + best.slot;
+  if (allowMix && best.d > AUTO_THRESH && slots.length >= 2) {
+    const mix = PaintPortCore.bestMix(f.color, slots);
+    if (mix && mix.deltaE < best.d - 2) return "mix";
+  }
+  return "p" + best.slot;
+}
+
+// Filament wird als Part-Basis-Extruder referenziert (build3MF remappt p.extruder für
+// ModelPart UND ParameterModifier — Stats zählen beide Fälle nicht: voll bemalte Parts
+// haben baseTris 0, Modifier fließen gar nicht ein). type-Fallback wie in build3MF/load3MF:
+// fehlt type, gilt der Part als ModelPart.
+function usesPartExtruder(f) {
+  return !!MODEL && MODEL.objects.some((o) => (o.parts || []).some((p) => {
+    const type = p.type || "ModelPart";
+    return p.extruder === f.index && (type === "ModelPart" || type === "ParameterModifier");
+  }));
+}
+// Braucht dieses Filament eine Zuordnung? (Painting, unbemalte Basis, Objekt-Default
+// oder Part-Extruder-Referenz)
+function isRelevantFilament(f) {
+  return f.paintedTris > 0 || f.baseTris > 0 || f.isDefaultOf > 0 || usesPartExtruder(f);
 }
 
 function autoMap() {
   const slots = activeSlots();
   const allowMix = $("allowMix").checked;
-  const THRESH = 12; // ΔE-Schwelle: darüber lohnt ColorMix
   document.querySelectorAll("#mapTable select").forEach((sel) => {
     const f = MODEL.filaments.find((x) => x.index === +sel.dataset.fil);
-    let best = null;
-    for (const s of slots) {
-      const d = PaintPortCore.deltaE(f.color, s.color);
-      if (!best || d < best.d) best = { d, slot: s.slot };
-    }
-    if (!best) return;
-    // Basis-Filamente (unbemalte Flächen von Objekten/Parts) immer physisch mappen —
-    // ein virtueller Volume-Extruder macht den kompletten Körper zur Mischung.
-    if (f.isDefaultOf > 0 || f.baseTris > 0) {
-      sel.value = "p" + best.slot;
-    } else if (allowMix && best.d > THRESH && slots.length >= 2) {
-      const mix = PaintPortCore.bestMix(f.color, slots);
-      sel.value = (mix && mix.deltaE < best.d - 2) ? "mix" : "p" + best.slot;
-    } else {
-      sel.value = "p" + best.slot;
-    }
+    const v = bestOption(f, slots, allowMix);
+    if (v) sel.value = v;
   });
   updateResults();
 }
@@ -1755,7 +1791,7 @@ function updateResults() {
     }
   });
   // Kollisionswarnung: verschiedene Quellfarben, die auf (fast) dieselbe Ergebnisfarbe laufen
-  const relevant = rows.filter((r) => (r.f.paintedTris > 0 || r.f.baseTris > 0 || r.f.isDefaultOf > 0) && r.target.kind !== "none");
+  const relevant = rows.filter((r) => isRelevantFilament(r.f) && r.target.kind !== "none");
   for (let i = 0; i < relevant.length; i++)
     for (let j = i + 1; j < relevant.length; j++) {
       const a = relevant[i], b = relevant[j];
@@ -1775,6 +1811,18 @@ function updateResults() {
   } else {
     tip.classList.add("hidden");
   }
+  // Bambu-16er-Limit vorwarnen (physische Liste bis zum höchsten aktiven Slot + Mixe),
+  // sonst knallt es erst beim Export-Klick (ERR_BBS_MAX16). Snapmaker/Prusa: kein Limit.
+  const lw = $("limitWarn");
+  if (lw) {
+    const tgtNow = currentTarget();
+    const mixKeys = new Set(relevant.filter((r) => r.target.kind === "mix")
+      .map((r) => r.target.mix.components.map((c) => c.slot + ":" + c.ratio).join("|")));
+    const base = slots.length ? Math.max(...slots.map((s) => s.slot)) : 0;
+    const over = tgtNow.mixFormat === "bambu" && mixKeys.size > 0 && base + mixKeys.size > 16;
+    lw.classList.toggle("hidden", !over);
+    if (over) lw.textContent = t("export.limitWarn", { total: base + mixKeys.size });
+  }
   if (typeof schedulePreviewRecolor === "function") schedulePreviewRecolor();
 }
 
@@ -1791,12 +1839,24 @@ async function doExport() {
     // (PrusaSlicers Import-Remap verschiebt zwar Painting-States, nicht aber den
     // Volume-Basis-Extruder).
     const P = printerCount();
+    const tgt = currentTarget();
+    // bbs-Ziele: Filamentliste endet am höchsten AKTIVEN Slot — leere AMS-Plätze
+    // dahinter würden das 16er-Limit (physisch + Mixe) verbrennen (v0.7.1-Bug:
+    // P=16 + 1 Mix ⇒ ERR_BBS_MAX16, kein Download). Prusa behält ALLE Drucker-
+    // Extruder (source_physical_count-Invariante, s. Kommentar unten).
+    const pBase = tgt.flavor === "bambu" ? Math.max(...slots.map((s) => s.slot)) : P;
     const stateMap = new Map();
     const virtuals = [];
     const virtualByKey = new Map();
     document.querySelectorAll("#mapTable select").forEach((sel) => {
       const src = +sel.dataset.fil;
       const f = MODEL.filaments.find((x) => x.index === src);
+      // Filamente ohne Dreiecke (weder bemalt noch Basis noch Objekt-Default noch
+      // Part-Extruder-Referenz — voll bemalte ModelParts/ParameterModifier-Extruder)
+      // brauchen keine Zuordnung und dürfen keine Mix-Slots erzeugen — ihre States
+      // kommen im Modell sonst mit dem rohen Extruder durch (ungemappt) statt zu
+      // verschwinden, würden aber das Bambu-16er-Limit mit verbrauchen.
+      if (!isRelevantFilament(f)) return;
       const target = resolveTarget(sel, f, slots);
       if (target.kind === "physical") {
         stateMap.set(src, target.slot);
@@ -1804,7 +1864,7 @@ async function doExport() {
         const mix = target.mix;
         const key = mix.components.map((c) => c.slot + ":" + c.ratio).join("|");
         if (!virtualByKey.has(key)) {
-          const id = P + virtuals.length + 1;
+          const id = pBase + virtuals.length + 1;
           virtuals.push({
             id,
             color: mix.predicted,
@@ -1819,11 +1879,10 @@ async function doExport() {
     // physical_extruders im Full-Spectrum-JSON = ALLE Drucker-Extruder (source_physical_count
     // muss der Drucker-Extruderzahl entsprechen, damit PrusaSlicer nichts remappen muss)
     const physical = [];
-    for (let s = 1; s <= P; s++) {
+    for (let s = 1; s <= pBase; s++) {
       const el = $("slotHex" + s);
       physical.push({ slot: s, color: el ? el.value : "#808080" });
     }
-    const tgt = currentTarget();
     const plan = {
       target: tgt.flavor,
       bbsApp: tgt.bbsApp,

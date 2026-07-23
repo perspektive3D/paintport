@@ -154,6 +154,13 @@ printer/filament presets survive as project placeholders named after the file �
 back to real presets keeps the colors. `filament_colour` length defines the physical
 filament count `n` used to validate blend definitions.
 
+Since PaintPort 0.7.2 the physical part of that list ends at the **highest active slot**
+of the mapping, not at the printer's full slot count — unlike the Prusa full-spectrum
+path (§3), which always lists all printer extruders. Empty AMS slots after the last used
+one would otherwise burn Bambu Studio's 16-filament cap (physical + blends, §8b): a
+16-slot list plus a single blend already exceeds it. Blend filament ids start directly
+after that highest active slot.
+
 ## 8. The two ColorMix on-disk schemas
 
 Nobody in the bbs world reads Prusa's `Prusa_Slicer_full_spectrum.json`. Each fork has its

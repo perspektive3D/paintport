@@ -2,6 +2,26 @@
 
 All notable changes to PaintPort. Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [0.7.2] — 2026-07-22
+
+### Fixed
+- **Bambu Studio export died with any ColorMix blend** ("Bambu Studio unterstützt maximal
+  16 Filamente", no download): the exported filament list now ends at the highest *active*
+  slot instead of always covering all 16 printer slots, leaving room for blends within
+  Bambu's 16-filament cap. Filaments that are neither painted nor used as a base no longer
+  occupy slots (all targets). The same list-shrink applies to Snapmaker Orca exports
+  (shared bbs flavor); blend filament IDs now start right after the highest active slot.
+- **Switching the target slicer scrambled the mapping**: assignments pointing at a slot
+  that no longer exists (e.g. slot 5 after switching to the 4-toolhead Snapmaker U1) now
+  fall back to the ΔE-closest active slot or blend — previously they silently collapsed
+  onto the first option. A status note lists the re-assigned filaments.
+- Slot colors/state above the new extruder count survive target switches (memo instead of
+  DOM-only), and a manually unchecked "allow ColorMix" is no longer re-enabled on switch.
+
+### Added
+- Early warning in the mapping step when active slots + blends would exceed Bambu Studio's
+  16-filament limit — before the export button fails.
+
 ## [0.7.1] — 2026-07-21
 
 ### Added

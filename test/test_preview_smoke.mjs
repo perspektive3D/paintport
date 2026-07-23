@@ -135,6 +135,151 @@ const smoke = `
     if (resetBtn) resetBtn.click();
     R.resetOk = !!resetBtn && confirmAsked;
 
+    // --- 8) Bambu-Export mit Mix (v0.7.1-Bug): Filamentliste endet am höchsten aktiven
+    //        Slot, Export darf NICHT an ERR_BBS_MAX16 sterben. zipAll gestubbt (Budget!).
+    document.getElementById("exportTarget").value = "bambu";
+    onTargetChange(); // printerN 16, aktive Slots folgen dem aktuellen UI-Zustand (pBase wird dynamisch berechnet)
+    const sel2c = document.querySelector('#mapTable select[data-fil="2"]');
+    const mixOpt8 = [...sel2c.options].find((o) => o.value.startsWith("mix:"));
+    sel2c.value = mixOpt8 ? mixOpt8.value : "mix";
+    document.querySelector('#mapTable select[data-fil="1"]').value = "p1";
+    updateResults();
+    const pBase8 = Math.max(...activeSlots().map((s) => s.slot));
+    let mixEntries = null;
+    PaintPortCore.zipAll = async (entries) => { mixEntries = entries; return new Uint8Array([0]); };
+    await doExport();
+    PaintPortCore.zipAll = origZipAll;
+    const mixPs = mixEntries ? JSON.parse(new TextDecoder().decode(
+      mixEntries.find((e) => e.name === "Metadata/project_settings.config").data)) : null;
+    R.bambuMixColours = mixPs ? mixPs.filament_colour.length : -1;
+    R.bambuMixExportOk = !!mixPs &&
+      mixPs.filament_colour.length === pBase8 + 1 &&
+      Array.isArray(mixPs.filament_is_mixed) &&
+      mixPs.filament_is_mixed.join() === [...Array(pBase8).fill("0"), "1"].join() &&
+      document.getElementById("status").className !== "err";
+
+    document.getElementById("exportTarget").value = "prusa";
+    onTargetChange();
+
+    // --- 9) Zielwechsel-Remap (v0.7.1-Bug): Zuordnung auf weggefallenem Slot fällt
+    //        auf den ΔE-besten aktiven Slot zurück (nicht erste Option), mit Hinweis.
+    document.getElementById("slotOn4").checked = true;
+    document.getElementById("slotHex4").value = "#00CC00"; syncCol(4);
+    document.getElementById("slotOn5").checked = true;
+    document.getElementById("slotHex5").value = "#123456"; syncCol(5);
+    renderMapping();
+    document.querySelector('#mapTable select[data-fil="2"]').value = "p5"; // Grün → Slot 5
+    updateResults();
+    setStatus(""); // isoliert die Remap-Notice-Assertion unten vom Zielwechsel selbst
+    document.getElementById("exportTarget").value = "snapmaker"; // 4 Slots: p5 entfällt
+    onTargetChange();
+    const s2v = document.querySelector('#mapTable select[data-fil="2"]').value;
+    R.remapValue = s2v;
+    // Kein Kollaps auf die erste Option (p1) UND exakt das bestOption-Ergebnis
+    // (je nach ΔE/predictMix legitim "p4" ODER "mix" — beides korrekt, daher
+    // gegen die Funktion prüfen statt hart zu kodieren). typeof-Guard: vor dem
+    // Fix existiert bestOption nicht — dann false statt Script-Abbruch.
+    R.remapOk = s2v !== "p1" && s2v !== "p5" &&
+      (typeof bestOption === "function"
+        ? s2v === bestOption(MODEL.filaments[1], activeSlots(), document.getElementById("allowMix").checked)
+        : false);
+    R.remapNotice = document.getElementById("status").textContent.includes("Filament 2");
+
+    // --- 10) Zielwechsel: Slot-Gedächtnis (v0.7.1-Bug) + allowMix-Nutzerwahl erhalten ---
+    document.getElementById("exportTarget").value = "bambu";
+    onTargetChange(); // zurück auf 16 Slots — Slot 5 muss Farbe/Zustand behalten
+    R.slotMemoOk = document.getElementById("slotHex5").value === "#123456" &&
+                   document.getElementById("slotOn5").checked === true;
+    document.getElementById("allowMix").checked = false;
+    document.getElementById("exportTarget").value = "snapmaker";
+    onTargetChange();
+    R.mixPreserved = document.getElementById("allowMix").checked === false;
+    document.getElementById("allowMix").checked = true; // Zustand für Folge-Schritte
+
+    // --- 11) Bambu-Limit-Vorwarnung: 16 aktive Slots + 1 Mix → #limitWarn sichtbar,
+    //         bei Snapmaker-Ziel (kein 16er-Limit) wieder versteckt.
+    document.getElementById("exportTarget").value = "bambu";
+    onTargetChange();
+    for (let s = 1; s <= 16; s++) document.getElementById("slotOn" + s).checked = true;
+    renderMapping();
+    document.querySelector('#mapTable select[data-fil="2"]').value = "mix";
+    updateResults();
+    R.limitWarnShown = !document.getElementById("limitWarn").classList.contains("hidden");
+    document.getElementById("exportTarget").value = "snapmaker";
+    onTargetChange();
+    R.limitWarnHidden = document.getElementById("limitWarn").classList.contains("hidden");
+
+    // --- 12) Part-Basis-only-Extruder (Finding 1, Final-Review 0.7.2): Filament wird NUR
+    //         als Basis-Extruder eines voll bemalten ModelPart referenziert (kein Painting-
+    //         State, kein Objekt-Default) → paintedTris/baseTris/isDefaultOf sind alle 0
+    //         (der relevance-Blindspot aus Task 1). Muss trotzdem gemappt werden, sonst
+    //         bleibt der rohe Quell-Extruder 3 unremappt im Export stehen.
+    const MODEL_BAK = MODEL;
+    MODEL = {
+      objects: [{
+        name: "partbase", defaultExtruder: 1, transform: null,
+        vertices: new Float64Array([0, 0, 0, 10, 0, 0, 0, 10, 0, 15, 0, 0, 25, 0, 0, 15, 10, 0]),
+        tris: new Int32Array([0, 1, 2, 3, 4, 5]),
+        paints: ["8", "8"],
+        triState: new Int16Array([2, 2]),
+        parts: [{ firstTri: 0, triCount: 2, extruder: 3, type: "ModelPart" }],
+      }],
+      filaments: [
+        { index: 1, color: "#FF0000", colorKnown: true, paintedTris: 0, baseTris: 0, isDefaultOf: 1 },
+        { index: 2, color: "#00FF00", colorKnown: true, paintedTris: 2, baseTris: 0, isDefaultOf: 0 },
+        { index: 3, color: "#0000FF", colorKnown: true, paintedTris: 0, baseTris: 0, isDefaultOf: 0 }, // Blindspot: nur Part-Basis-Extruder
+      ],
+      unpainted: 0, totalTris: 2, usedExtruders: [2], specialVolumes: 0,
+    };
+    renderSlots(); renderMapping();
+    // Alle 3 Zuordnungen explizit auf physische Slots setzen (nicht nur Filament 3) —
+    // sonst greift für Filament 2 das Slot-Gedächtnis aus Schritt 11 (dort stand
+    // data-fil="2" auf "mix") und bläht das Bambu-16er-Limit unerwartet auf.
+    document.querySelector('#mapTable select[data-fil="1"]').value = "p1";
+    document.querySelector('#mapTable select[data-fil="2"]').value = "p1";
+    document.querySelector('#mapTable select[data-fil="3"]').value = "p2"; // realer Slot ≠ 3
+    updateResults();
+    document.getElementById("exportTarget").value = "bambu";
+    onTargetChange(); // rendert die Mapping-Zeilen neu — alle drei Zuordnungen unten erneut setzen
+    document.querySelector('#mapTable select[data-fil="1"]').value = "p1";
+    document.querySelector('#mapTable select[data-fil="2"]').value = "p1";
+    document.querySelector('#mapTable select[data-fil="3"]').value = "p2";
+    updateResults();
+    let pbEntries = null;
+    PaintPortCore.zipAll = async (entries) => { pbEntries = entries; return new Uint8Array([0]); };
+    await doExport();
+    PaintPortCore.zipAll = origZipAll;
+    const pbCfg = pbEntries
+      ? new TextDecoder().decode(pbEntries.find((e) => e.name === "Metadata/model_settings.config").data)
+      : "";
+    // extruder-Wert steckt in model_settings.config (Object- + Part-Metadata), nicht als
+    // Attribut in 3D/3dmodel.model (das trägt nur paint_color je Dreieck).
+    R.partBaseRemapOk = pbCfg.includes('key="extruder" value="2"') &&
+      !pbCfg.includes('key="extruder" value="3"') &&
+      document.getElementById("status").className !== "err";
+
+    // --- 13) Part-Basis-only-Extruder, Prusa-Pfad (Härtung Final-Review): derselbe
+    //         Blindspot wie Schritt 12, aber Ziel prusa — extruder-Metadata landet dort
+    //         in Metadata/Slic3r_PE_model.config (kein full_spectrum.json, da keine
+    //         virtuals hier). Stub-MODEL aus Schritt 12 bleibt aktiv, erst danach restaurieren.
+    document.getElementById("exportTarget").value = "prusa";
+    onTargetChange(); // rendert die Mapping-Zeilen neu — alle drei Zuordnungen unten erneut setzen
+    document.querySelector('#mapTable select[data-fil="1"]').value = "p1";
+    document.querySelector('#mapTable select[data-fil="2"]').value = "p1";
+    document.querySelector('#mapTable select[data-fil="3"]').value = "p2";
+    updateResults();
+    let pbEntriesPrusa = null;
+    PaintPortCore.zipAll = async (entries) => { pbEntriesPrusa = entries; return new Uint8Array([0]); };
+    await doExport();
+    PaintPortCore.zipAll = origZipAll;
+    const pbCfgPrusa = pbEntriesPrusa
+      ? new TextDecoder().decode(pbEntriesPrusa.find((e) => e.name === "Metadata/Slic3r_PE_model.config").data)
+      : "";
+    R.partBasePrusaOk = pbCfgPrusa.includes('key="extruder" value="2"') &&
+      !pbCfgPrusa.includes('key="extruder" value="3"') &&
+      document.getElementById("status").className !== "err";
+
+    MODEL = MODEL_BAK;
     document.getElementById("exportTarget").value = "prusa";
     onTargetChange();
 
@@ -145,7 +290,12 @@ const smoke = `
            R.targetPrinterN === "4" && R.bambuPrinterN === "16" &&
            R.bambuMixEnabled === true && R.targetMixEnabled === true &&
            R.targetBtn.includes("Snapmaker") && R.bbsExportOk === true &&
-           R.suffixManual === true && R.suffixPreset === true && R.resetOk === true;
+           R.suffixManual === true && R.suffixPreset === true && R.resetOk === true &&
+           R.bambuMixExportOk === true &&
+           R.remapOk === true && R.remapNotice === true &&
+           R.slotMemoOk === true && R.mixPreserved === true &&
+           R.limitWarnShown === true && R.limitWarnHidden === true &&
+           R.partBaseRemapOk === true && R.partBasePrusaOk === true;
   } catch (e) { R.error = String(e && e.stack || e); }
   document.title = "RESULT:" + JSON.stringify(R);
 })();
