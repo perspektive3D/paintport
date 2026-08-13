@@ -2,6 +2,52 @@
 
 All notable changes to PaintPort. Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [0.8.3] — 2026-08-13
+
+### Fixed
+- **Files with more than 16 paint states failed to load** (`Paint string not fully
+  consumed`), e.g. Bambu H2C ColorMix projects with dozens of blend slots: `paint_color`
+  uses a different extended-state encoding than PrusaSlicer's `mmu_segmentation`
+  (unary `F` extension vs. 8-bit escape — both verified against the slicers' source).
+  PaintPort now parses and emits both dialects and picks the right one per source
+  attribute and export target. This also fixes the (previously unreachable) case where
+  a Bambu/Snapmaker export with 17+ states would have written strings those slicers
+  misread. Existing exports are unaffected — states up to 16 encode identically.
+
+## [0.8.2] — 2026-08-09
+
+### Changed
+- **Auto-mapping treats ColorMix blends as equals**: previously, base/part filaments
+  were always mapped to physical spools, and blends were only considered when the
+  closest spool was ΔE > 12 away and the blend won by more than 2. All three guards
+  are gone — the blend now wins whenever its predicted ΔE is smaller than the closest
+  spool's (ties keep the spool). Rationale: the target printers are toolchangers
+  (no purge waste), the U1 Full Spectrum workflow prints entire models from blends,
+  and manually entered spool colors are estimates themselves. Manual per-row control
+  and the "allow ColorMix" switch are unchanged.
+
+## [0.8.1] — 2026-08-08
+
+### Fixed
+- **Opening a Snapmaker Orca / Bambu Studio export as a project reset the printer and
+  filament presets to arbitrary defaults** (e.g. Snapmaker U1 jumped to the 0.2-nozzle
+  variant with "Generic ABS" filaments): the minimal `project_settings.config` carried
+  no preset identity, so the slicer's project import could not restore any preset and
+  fell back to first-in-list library entries. Snapmaker exports now carry the stock U1
+  identity (`Snapmaker U1 (0.4 nozzle)`, PLA filament presets); Bambu exports pass the
+  printer identity of the source 3MF through. If a named preset is not installed, the
+  slicer simply falls back to the previous behavior — never worse than before.
+
+## [0.8.0] — 2026-08-07
+
+### Added
+- **Polymaker Panchroma™ preset**: new spool preset with the real manufacturer colors
+  of the Panchroma™ Translucent CMYK set (Cyan `#08ABFB`, Magenta `#D93B90`, Yellow
+  `#F9ED3D`, Grey `#9199A4` — source: shop.polymaker.com). Auto-mapping, blend
+  prediction and the 3D preview now run on the actual filament colors instead of ideal
+  CMY values; matching exports get a `_PANCHROMA` filename suffix. Preset buttons can
+  now carry a display label and a translated tooltip (DE/EN).
+
 ## [0.7.2] — 2026-07-22
 
 ### Fixed

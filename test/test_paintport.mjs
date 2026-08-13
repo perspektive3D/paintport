@@ -26,7 +26,7 @@ let checked = 0, mismatches = 0;
 for (const o of model.objects) {
   for (const p of o.paints) {
     if (!p) continue;
-    const rt = FW.emitPaintTree(FW.parsePaintTree(p));
+    const rt = FW.emitPaintTree(FW.parsePaintTree(p, model.paintDialect), model.paintDialect);
     if (rt !== p) { mismatches++; if (mismatches < 5) console.log("MISMATCH:", p, "→", rt); }
     checked++;
   }

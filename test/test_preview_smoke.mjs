@@ -32,6 +32,15 @@ const smoke = `
         { index: 2, color: "#00FF00", colorKnown: true, paintedTris: 1, baseTris: 0, isDefaultOf: 0 },
       ],
       unpainted: 1, totalTris: 2, usedExtruders: [2], specialVolumes: 0,
+      // Quell-Identität wie aus einer MakerWorld-3MF (Bugfix 0.8.1): Bambu-Ziel muss
+      // sie durchreichen, Snapmaker-Ziel muss sie IGNORIEREN (U1-Stock-Identität).
+      sourceIdentity: {
+        printer_settings_id: "Bambu Lab A1 0.4 nozzle", printer_model: "Bambu Lab A1",
+        printer_variant: "0.4", nozzle_diameter: ["0.4"],
+        print_settings_id: "0.20mm Standard @BBL A1",
+        filament_settings_id: ["Bambu PLA Basic @BBL A1", "Bambu PLA Basic @BBL A1"],
+        filament_type: ["PLA", "PLA"],
+      },
     };
     renderSlots();
     renderMapping();
@@ -121,6 +130,16 @@ const smoke = `
       !bbsNames.includes("Metadata/Prusa_Slicer_full_spectrum.json") &&
       !!bbsPs && Array.isArray(bbsPs.filament_colour) && bbsPs.filament_colour.length === 4 &&
       new TextDecoder().decode(bbsEntries.find((e) => e.name === "3D/3dmodel.model").data).includes("BambuStudio-2.3.5");
+    // Bugfix 0.8.1: Snapmaker-Ziel schreibt U1-Stock-Identität (NICHT die A1-Quelle)
+    R.smIdentityOk = !!bbsPs && bbsPs.printer_settings_id === "Snapmaker U1 (0.4 nozzle)" &&
+      bbsPs.printer_model === "Snapmaker U1" && bbsPs.printer_variant === "0.4" &&
+      Array.isArray(bbsPs.nozzle_diameter) && bbsPs.nozzle_diameter.length === 4 &&
+      bbsPs.nozzle_diameter.every((d) => d === "0.4") &&
+      bbsPs.print_settings_id === "0.20 Standard @Snapmaker U1 (0.4 nozzle)" &&
+      Array.isArray(bbsPs.filament_settings_id) && bbsPs.filament_settings_id.length === bbsPs.filament_colour.length &&
+      bbsPs.filament_settings_id.every((s) => s === "Snapmaker PLA SnapSpeed @U1") &&
+      Array.isArray(bbsPs.filament_type) && bbsPs.filament_type.length === bbsPs.filament_colour.length &&
+      bbsPs.filament_type.every((tp) => tp === "PLA");
     // --- 7) Farbmodus-Suffix (Issue #1) + Reset-Button (Issue #2) ---
     // Snapmaker-Export oben lief mit 4 Default-Slots (kein Preset) → _snapmaker_4T
     // (deckt die Dateinamens-Komposition in doExport ab). Preset-Erkennung danach
@@ -157,6 +176,17 @@ const smoke = `
       Array.isArray(mixPs.filament_is_mixed) &&
       mixPs.filament_is_mixed.join() === [...Array(pBase8).fill("0"), "1"].join() &&
       document.getElementById("status").className !== "err";
+    // Bugfix 0.8.1: Bambu-Ziel reicht die Quell-Identität durch; per-Slot-Arrays
+    // decken ALLE Slots inkl. Mixe ab (SpeedBoat-Ground-Truth ist uniform).
+    R.bambuIdentityOk = !!mixPs && mixPs.printer_settings_id === "Bambu Lab A1 0.4 nozzle" &&
+      mixPs.printer_model === "Bambu Lab A1" && mixPs.printer_variant === "0.4" &&
+      Array.isArray(mixPs.nozzle_diameter) && mixPs.nozzle_diameter.length === 1 &&
+      mixPs.nozzle_diameter[0] === "0.4" &&
+      mixPs.print_settings_id === "0.20mm Standard @BBL A1" &&
+      Array.isArray(mixPs.filament_settings_id) && mixPs.filament_settings_id.length === mixPs.filament_colour.length &&
+      mixPs.filament_settings_id.every((s) => s === "Bambu PLA Basic @BBL A1") &&
+      Array.isArray(mixPs.filament_type) && mixPs.filament_type.length === mixPs.filament_colour.length &&
+      mixPs.filament_type.every((tp) => tp === "PLA");
 
     document.getElementById("exportTarget").value = "prusa";
     onTargetChange();
@@ -283,6 +313,29 @@ const smoke = `
     document.getElementById("exportTarget").value = "prusa";
     onTargetChange();
 
+    // --- 14) Panchroma-Preset (v0.8.0): echte Herstellerfarben, Label + Tooltip,
+    //         Suffix _PANCHROMA. Prusa-Ziel aus Schritt 13 aktiv (8 Slots) → 4 Farben passen,
+    //         Slots 5–8 werden deaktiviert (inkl. Slot 5 aus Schritt 9/10).
+    const pcIdx = PRESETS.findIndex((p) => p.id === "PANCHROMA");
+    const pcBtn = [...document.querySelectorAll("#presetBtns button")]
+      .find((b) => b.textContent === "Panchroma™");
+    R.panchromaBtnOk = pcIdx >= 0 && !!pcBtn && (pcBtn.title || "").length > 10;
+    if (pcIdx >= 0) applyPreset(pcIdx);
+    const pcColors = ["#08ABFB", "#D93B90", "#F9ED3D", "#9199A4"];
+    R.panchromaSlotsOk = pcColors.every((c, i) => document.getElementById("slotHex" + (i + 1)).value === c) &&
+      !document.getElementById("slotOn5").checked;
+    R.panchromaSuffixOk = colorModeSuffix() === "_PANCHROMA";
+
+    // --- 15) Mix-Gleichstellung (v0.8.2): keine Basis-Sperre, keine ΔE-Schwelle,
+    //         keine Hysterese — Mix gewinnt, sobald sein geschätzter ΔE kleiner ist.
+    //         Filament 1 (Rot) ist Basis-Filament (isDefaultOf=1) UND Part-Extruder —
+    //         testet beide entfernten Sperren. Y+M-Mix dE≈61 vs physisch dE≈114.
+    const eqSlotsMix = [{ slot: 1, color: "#FFFF00" }, { slot: 2, color: "#FF00FF" }];
+    R.autoMixBase = bestOption(MODEL.filaments[0], eqSlotsMix, true) === "mix";
+    const eqSlotsExact = [{ slot: 1, color: "#FF0000" }, { slot: 2, color: "#FFFF00" }, { slot: 3, color: "#FF00FF" }];
+    R.autoExactStays = bestOption(MODEL.filaments[0], eqSlotsExact, true) === "p1";
+    R.autoMixOff = (bestOption(MODEL.filaments[0], eqSlotsMix, false) || "").startsWith("p");
+
     R.ok = orig.red > 100 && orig.green > 100 && R.mixOptionCount >= 3 &&
            R.pinnedResHasSwatch && R.collisionBadges === 2 &&
            res.white > 200 && res.red < 20 && res.green < 20 &&
@@ -295,7 +348,11 @@ const smoke = `
            R.remapOk === true && R.remapNotice === true &&
            R.slotMemoOk === true && R.mixPreserved === true &&
            R.limitWarnShown === true && R.limitWarnHidden === true &&
-           R.partBaseRemapOk === true && R.partBasePrusaOk === true;
+           R.partBaseRemapOk === true && R.partBasePrusaOk === true &&
+           R.panchromaBtnOk === true && R.panchromaSlotsOk === true &&
+           R.panchromaSuffixOk === true &&
+           R.smIdentityOk === true && R.bambuIdentityOk === true &&
+           R.autoMixBase === true && R.autoExactStays === true && R.autoMixOff === true;
   } catch (e) { R.error = String(e && e.stack || e); }
   document.title = "RESULT:" + JSON.stringify(R);
 })();

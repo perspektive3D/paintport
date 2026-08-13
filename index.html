@@ -301,7 +301,7 @@ Es wird kein Code dieser Projekte ausgeliefert; Formate wurden zur Interoperabil
 // ============================================================
 "use strict";
 
-const PAINTPORT_VERSION = "0.7.2"; // einzige Versions-Quelle (UI-Badge + Generator-Metadata)
+const PAINTPORT_VERSION = "0.8.3"; // einzige Versions-Quelle (UI-Badge + Generator-Metadata)
 
 // Core-Fehler: englische Message + stabiler err.code (UI übersetzt via I18N "err.<code>")
 const CORE_ERRORS = {
@@ -454,7 +454,13 @@ async function zipAll(entries) {
 // Leaf:  code&3==0, state = code>>2. state==3 → Zusatz-Nibble z: z<=13 → state=3+z;
 //        z==14 → zwei weitere Nibbles v (low, high) → state=17+v.
 // Split: code&3 = Zahl geteilter Seiten (1..3), code>>2 = special side, danach (split+1) Kinder.
-function parsePaintTree(str) {
+// Zwei Leaf-State-Dialekte ab State 17 (identisch bis 16, quellcode-verifiziert
+// 13.08.2026): "prusa" (slic3rpe:mmu_segmentation, MmPaintingVersion 2 —
+// TriangleSelector PrusaSlicer 2.9.6): Escape-Nibble E → 8-Bit-Feld, state=17+v.
+// "bbs" (paint_color — TriangleSelector Snapmaker Orca v2.3.5 Z. 1790 ff.,
+// BBS-Lineage inkl. Bambu 02.06/H2C): unäre F-Erweiterung, state=3+15·numF+z,
+// unbegrenzt (EC=17, 0FC=18, DFC=31). Default "prusa" = Bestandsverhalten.
+function parsePaintTree(str, dialect) {
   let i = str.length;
   const next = () => {
     if (i <= 0) throw coreError("ERR_PAINT_SHORT", str);
@@ -469,9 +475,15 @@ function parsePaintTree(str) {
     if (splitSides === 0) {
       let state = code >> 2;
       if (state === 3) {
-        const z = next();
-        if (z === 14) { const lo = next(); const hi = next(); state = 17 + (lo | (hi << 4)); }
-        else state = 3 + z;
+        if (dialect === "bbs") {
+          let z = next(), num = 0;
+          while (z === 15) { num++; z = next(); }
+          state = 3 + 15 * num + z;
+        } else {
+          const z = next();
+          if (z === 14) { const lo = next(); const hi = next(); state = 17 + (lo | (hi << 4)); }
+          else state = 3 + z;
+        }
       }
       return { state };
     }
@@ -484,7 +496,7 @@ function parsePaintTree(str) {
   if (i !== 0) throw coreError("ERR_PAINT_TRAIL", str);
   return root;
 }
-function emitPaintTree(root) {
+function emitPaintTree(root, dialect) {
   const nibbles = [];
   function emit(n) {
     if (n.children) {
@@ -493,6 +505,12 @@ function emitPaintTree(root) {
     } else {
       const s = n.state;
       if (s <= 2) nibbles.push(s << 2);
+      else if (dialect === "bbs") {
+        nibbles.push(0b1100);
+        let v = s - 3;
+        while (v >= 15) { nibbles.push(15); v -= 15; }
+        nibbles.push(v);
+      }
       else if (s <= 16) { nibbles.push(0b1100); nibbles.push(s - 3); }
       else { nibbles.push(0b1100); nibbles.push(14); nibbles.push((s - 17) & 0xF); nibbles.push((s - 17) >> 4); }
     }
@@ -503,18 +521,18 @@ function emitPaintTree(root) {
   for (const n of nibbles) out = n.toString(16).toUpperCase() + out;
   return out;
 }
-function remapPaintString(str, mapState) {
-  const root = parsePaintTree(str);
+function remapPaintString(str, mapState, inDialect, outDialect) {
+  const root = parsePaintTree(str, inDialect);
   let maxState = 0;
   (function walk(n) {
     if (n.children) { n.children.forEach(walk); return; }
     if (n.state > 0) n.state = mapState(n.state);
     if (n.state > maxState) maxState = n.state;
   })(root);
-  return { str: emitPaintTree(root), maxState };
+  return { str: emitPaintTree(root, outDialect), maxState };
 }
-function collectStates(str, counter) {
-  const root = parsePaintTree(str);
+function collectStates(str, counter, dialect) {
+  const root = parsePaintTree(str, dialect);
   (function walk(n) {
     if (n.children) { n.children.forEach(walk); return; }
     counter.set(n.state, (counter.get(n.state) || 0) + 1);
@@ -568,6 +586,7 @@ function parseModelXML(xml) {
       while ((tm = tAny.exec(mesh)) !== null) {
         const a = parseAttrs(tm[0]);
         tris.push(+a.v1, +a.v2, +a.v3);
+        if (a["slic3rpe:mmu_segmentation"]) sawMmuSeg = true;
         paints.push(a["slic3rpe:mmu_segmentation"] || a.paint_color || null);
       }
       obj.tris = new Int32Array(tris);
@@ -634,6 +653,7 @@ async function load3MF(bytes) {
   const files = await unzipAll(bytes);
   const td = new TextDecoder();
   const text = (name) => files.has(name) ? td.decode(files.get(name)) : null;
+  let sawMmuSeg = false; // irgendein slic3rpe:mmu_segmentation-Attribut → prusa-Dialekt
 
   const mainXml = text("3D/3dmodel.model");
   if (!mainXml) throw coreError("ERR_NO_MODEL");
@@ -690,8 +710,11 @@ async function load3MF(bytes) {
     }
   }
 
-  // Filamentfarben (Bambu/Orca project_settings)
+  // Filamentfarben (Bambu/Orca project_settings) + Preset-Identität der Quelle
+  // (Bugfix 0.8.1: fürs Bambu-Ziel durchgereicht, damit der Projekt-Import die
+  // Drucker-/Filament-Presets wiederherstellen kann statt auf Defaults zu fallen)
   let filamentColors = null;
+  let sourceIdentity = null;
   const ps = text("Metadata/project_settings.config");
   if (ps) {
     try {
@@ -699,6 +722,10 @@ async function load3MF(bytes) {
       if (Array.isArray(j.filament_colour)) {
         filamentColors = j.filament_colour.map((c) => normalizeHex(c));
       }
+      const idKeys = ["printer_settings_id", "printer_model", "printer_variant",
+        "nozzle_diameter", "print_settings_id", "filament_settings_id", "filament_type"];
+      const found = idKeys.filter((k) => j[k] != null);
+      if (found.length) { sourceIdentity = {}; for (const k of found) sourceIdentity[k] = j[k]; }
     } catch (e) { /* Bambu-JSON kaputt → Farben unbekannt */ }
   }
 
@@ -779,6 +806,10 @@ async function load3MF(bytes) {
   }
   if (!outObjects.length) throw coreError("ERR_NO_OBJECTS");
 
+  // Paint-Dialekt der Quelle (s. parsePaintTree): Prusa-Dateien tragen
+  // mmu_segmentation, Bambu-/Orca-Dateien paint_color — pro Datei einheitlich.
+  const paintDialect = sawMmuSeg ? "prusa" : "bbs";
+
   // Painting-Statistik — nur ModelPart-Ranges; Negativ-/Modifier-Volumes sind keine
   // Druckoberfläche und dürfen weder Basis- noch Unbemalt-Zahlen verfälschen
   const stateCount = new Map();
@@ -794,7 +825,7 @@ async function load3MF(bytes) {
         const p = o.paints[i];
         if (!p) { unpainted++; base++; continue; }
         const local = new Map();
-        collectStates(p, local);
+        collectStates(p, local, paintDialect);
         let dom = 0, domN = 0;
         for (const [s, c] of local) {
           stateCount.set(s, (stateCount.get(s) || 0) + c);
@@ -823,7 +854,7 @@ async function load3MF(bytes) {
       isDefaultOf: outObjects.filter((o) => o.defaultExtruder === i).length,
     });
   }
-  return { objects: outObjects, filaments, unpainted, totalTris, usedExtruders, specialVolumes };
+  return { objects: outObjects, filaments, unpainted, totalTris, usedExtruders, specialVolumes, sourceIdentity, paintDialect };
 }
 
 function normalizeHex(c) {
@@ -915,6 +946,7 @@ function build3MF(model, plan) {
   // gemeinsame bbs_3mf.cpp-Basis: liest paint_color bedingungslos und Range-Volumes
   // (firstid/lastid) über denselben <part>/<volume>-Handler.
   const bambu = plan.target === "bambu";
+  const outDialect = bambu ? "bbs" : "prusa"; // Leaf-State-Dialekt des Exports (s. parsePaintTree)
   // ColorMix in der bbs-Welt, zwei Formate: Snapmaker Orca (mixFormat "snapmaker") =
   // mixed_filament_definitions-Kompaktstring; Bambu Studio (mixFormat "bambu") =
   // per-Slot-Arrays filament_is_mixed/_components/_ratios (Mixe sind dort reguläre
@@ -938,7 +970,7 @@ function build3MF(model, plan) {
   };
   const ATTR_PAINT = bambu ? "paint_color" : "slic3rpe:mmu_segmentation";
   const leafCache = new Map(); // Paint-All: Leaf-String je gemapptem Extruder-State
-  const leafStr = (s) => { let v = leafCache.get(s); if (v === undefined) { v = emitPaintTree({ state: s }); leafCache.set(s, v); } return v; };
+  const leafStr = (s) => { let v = leafCache.get(s); if (v === undefined) { v = emitPaintTree({ state: s }, outDialect); leafCache.set(s, v); } return v; };
 
   const modelParts = [];
   modelParts.push('<?xml version="1.0" encoding="UTF-8"?>\n');
@@ -1011,7 +1043,7 @@ function build3MF(model, plan) {
     const emitTriangle = (v1, v2, v3, i, fillState) => {
       const p = o.paints[i];
       if (p) {
-        const rm = remapPaintString(p, mapState);
+        const rm = remapPaintString(p, mapState, model.paintDialect || "bbs", outDialect);
         if (rm.maxState > maxState) maxState = rm.maxState;
         modelParts.push(`     <triangle v1="${v1}" v2="${v2}" v3="${v3}" ${ATTR_PAINT}="${rm.str}"/>\n`);
       } else if (fillState > 0) {
@@ -1208,6 +1240,32 @@ function build3MF(model, plan) {
       });
       psJson.mixed_filament_definitions = defs.join(";");
     }
+    // Preset-Identität (Bugfix 0.8.1): Ohne *_settings_id findet der bbs-Projekt-
+    // Import kein System-Preset (PresetBundle::load_config_file_config → leerer
+    // original_name → externes Default-Preset) und fällt auf erste Listeneinträge
+    // zurück — beim U1 „0.2 nozzle"-Variante + „Generic ABS". Snapmaker-Ziel bekommt
+    // die U1-Stock-Identität (Ground Truth platypus), Bambu-Ziel die der Quell-3MF.
+    // Per-Slot-Arrays müssen die FINALE filament_colour-Länge (inkl. Mixe) decken.
+    const idFill = (v) => Array(psJson.filament_colour.length).fill(v);
+    if (plan.mixFormat === "snapmaker") {
+      Object.assign(psJson, {
+        printer_settings_id: "Snapmaker U1 (0.4 nozzle)",
+        printer_model: "Snapmaker U1",
+        printer_variant: "0.4",
+        nozzle_diameter: ["0.4", "0.4", "0.4", "0.4"],
+        print_settings_id: "0.20 Standard @Snapmaker U1 (0.4 nozzle)",
+        filament_settings_id: idFill("Snapmaker PLA SnapSpeed @U1"),
+        filament_type: idFill("PLA"),
+      });
+    } else if (model.sourceIdentity) {
+      const src = model.sourceIdentity;
+      for (const k of ["printer_settings_id", "printer_model", "printer_variant", "nozzle_diameter", "print_settings_id"])
+        if (src[k] != null) psJson[k] = src[k];
+      if (Array.isArray(src.filament_settings_id) && src.filament_settings_id.length)
+        psJson.filament_settings_id = idFill(src.filament_settings_id[0]);
+      if (Array.isArray(src.filament_type) && src.filament_type.length)
+        psJson.filament_type = idFill(src.filament_type[0]);
+    }
     entries.push({ name: "Metadata/project_settings.config", data: te.encode(JSON.stringify(psJson, null, 4)) });
   }
 
@@ -1296,6 +1354,7 @@ const I18N = {
     "export.doneBbs": 'Export fertig: {file}\nIn Bambu Studio / Snapmaker Orca ALS PROJEKT öffnen — Painting + Slot-Farben kommen mit (Profile danach kurz prüfen). Drucker mit {p} Extrudern — Spulen: {spools}',
     "export.error": "Export-Fehler: {msg}",
     "preset.tooMany": "Preset {id} hat {have} Farben, Drucker nur {n} Extruder — nur die ersten {n} übernommen.",
+    "preset.tip.panchroma": "Polymaker Panchroma™ Translucent CMYK-Set — echte Herstellerfarben, entwickelt für Farbmischung (Full Spectrum) und transluzente Drucke.",
     "status.reading": "Lese {name} …",
     "status.loaded": "Geladen: {objects} Objekt(e), {tris} Dreiecke, {fils} Filament(e).",
     "status.error": "Fehler: {msg}",
@@ -1397,6 +1456,7 @@ const I18N = {
     "export.doneBbs": 'Export done: {file}\nOpen it in Bambu Studio / Snapmaker Orca AS A PROJECT — painting + slot colors carry over (double-check your profiles afterwards). Printer with {p} extruders — spools: {spools}',
     "export.error": "Export error: {msg}",
     "preset.tooMany": "Preset {id} has {have} colors but the printer only has {n} extruders — applied the first {n}.",
+    "preset.tip.panchroma": "Polymaker Panchroma™ Translucent CMYK set — real manufacturer colors, made for color mixing (Full Spectrum) and translucent prints.",
     "status.reading": "Reading {name} …",
     "status.loaded": "Loaded: {objects} object(s), {tris} triangles, {fils} filament(s).",
     "status.error": "Error: {msg}",
@@ -1466,6 +1526,7 @@ function applyI18n() {
   document.title = t("app.title");
   document.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
   document.querySelectorAll("[data-i18n-html]").forEach((el) => { el.innerHTML = t(el.dataset.i18nHtml); });
+  document.querySelectorAll("[data-i18n-title]").forEach((el) => { el.title = t(el.dataset.i18nTitle); });
   document.querySelectorAll(".langsel").forEach((b) => b.classList.toggle("act", b.dataset.lang === LANG));
   if (MODEL) { renderAnalyse(); renderMapping(); }
 }
@@ -1599,10 +1660,14 @@ const PRESETS = [
   { id: "KCMY",     colors: ["#000000", "#00FFFF", "#FF00FF", "#FFFF00"] },
   { id: "WKCMY",    colors: ["#FFFFFF", "#000000", "#00FFFF", "#FF00FF", "#FFFF00"] },
   { id: "WKCMYRGB", colors: ["#FFFFFF", "#000000", "#00FFFF", "#FF00FF", "#FFFF00", "#FF0000", "#00FF00", "#0000FF"] },
+  // Marken-Sets: echte Herstellerfarben (label = Anzeige, tipKey = i18n-Tooltip).
+  // Panchroma: Polymaker Panchroma™ Translucent CMYK, Hex laut shop.polymaker.com (08/2026).
+  { id: "PANCHROMA", label: "Panchroma™", tipKey: "preset.tip.panchroma",
+    colors: ["#08ABFB", "#D93B90", "#F9ED3D", "#9199A4"] },
 ];
 function renderPresetButtons() {
   $("presetBtns").innerHTML = PRESETS.map((p, i) =>
-    `<button class="ghost" onclick="applyPreset(${i})">${p.id}</button>`).join("");
+    `<button class="ghost" onclick="applyPreset(${i})"${p.tipKey ? ` title="${t(p.tipKey)}" data-i18n-title="${p.tipKey}"` : ""}>${p.label || p.id}</button>`).join("");
 }
 function applyPreset(idx) {
   const preset = PRESETS[idx];
@@ -1613,7 +1678,7 @@ function applyPreset(idx) {
     if (on) { $("slotCol" + s).value = preset.colors[s - 1]; $("slotHex" + s).value = preset.colors[s - 1]; }
   }
   if (preset.colors.length > n) {
-    setStatus(t("preset.tooMany", { id: preset.id, have: preset.colors.length, n }), "err");
+    setStatus(t("preset.tooMany", { id: preset.label || preset.id, have: preset.colors.length, n }), "err");
   }
   renderMapping();
 }
@@ -1719,10 +1784,14 @@ function renderMapping() {
   updateResults();
 }
 
-const AUTO_THRESH = 12; // ΔE-Schwelle: darüber lohnt ColorMix
 // Beste Zuordnung für ein Filament (gemeinsame Logik von autoMap + Remap-Fallback
-// in renderMapping): ΔE-nächster aktiver Slot; bei großem Abstand und erlaubtem
-// Mix der beste Mix. Liefert "p<N>", "mix" oder null (kein aktiver Slot).
+// in renderMapping): kleinster ΔE gewinnt — Mix und Spule gleichberechtigt
+// (v0.8.2, Entscheidung Nils 09.08.2026: Toolchanger ohne Purge-Abfall, U1-Full-
+// Spectrum druckt ganze Modelle aus Mixen, und Spulenfarben sind außer beim
+// Panchroma-Preset selbst nur Schätzungen — die alte Basis-Filament-Sperre,
+// AUTO_THRESH=12 und die ±2-Hysterese sind bewusst entfernt). Bei exaktem
+// Gleichstand bleibt die Spule (einfacherer Druck). Liefert "p<N>", "mix"
+// oder null (kein aktiver Slot).
 function bestOption(f, slots, allowMix) {
   let best = null;
   for (const s of slots) {
@@ -1730,13 +1799,9 @@ function bestOption(f, slots, allowMix) {
     if (!best || d < best.d) best = { d, slot: s.slot };
   }
   if (!best) return null;
-  // Basis-Filamente (unbemalte Flächen von Objekten/Parts) und Part-Extruder-Referenzen
-  // immer physisch mappen — ein virtueller Volume-Extruder macht den kompletten
-  // Körper (oder Modifier) zur Mischung.
-  if (f.isDefaultOf > 0 || f.baseTris > 0 || usesPartExtruder(f)) return "p" + best.slot;
-  if (allowMix && best.d > AUTO_THRESH && slots.length >= 2) {
+  if (allowMix && slots.length >= 2) {
     const mix = PaintPortCore.bestMix(f.color, slots);
-    if (mix && mix.deltaE < best.d - 2) return "mix";
+    if (mix && mix.deltaE < best.d) return "mix";
   }
   return "p" + best.slot;
 }
