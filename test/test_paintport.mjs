@@ -115,7 +115,15 @@ if (target !== "prusa") {
     check(Array.isArray(ps.filament_colour) && ps.filament_colour.length === wantColors.length &&
       ps.filament_colour.every((c, i) => c === wantColors[i]), `filament_colour == Slot-(+Mix-)Farben (${ps.filament_colour.length})`);
     check(typeof ps.version === "string" && ps.version.length > 0 && !ps.version.startsWith("BambuStudio"), `version-Key gesetzt (${ps.version})`);
-    check(Object.keys(ps).length <= (target === "bambu" && virtuals.length ? 11 : 4), `Config minimal (${Object.keys(ps).length} Keys)`);
+    // Allowlist statt Key-Zahl: seit v0.8.1 kommen bis zu 7 Preset-Identitäts-Keys dazu
+    // (die alte Obergrenze 4/11 schlug seither fälschlich fehl)
+    const okKeys = new Set(["version", "from", "filament_colour", "mixed_filament_definitions",
+      "filament_is_mixed", "filament_mixed_components", "filament_mixed_sublayer_ratios", "filament_mixed_gradient",
+      "filament_mixed_gradient_curve", "filament_mixed_gradient_per_part", "filament_mixed_gradient_range",
+      "printer_settings_id", "printer_model", "printer_variant", "nozzle_diameter", "print_settings_id",
+      "filament_settings_id", "filament_type"]);
+    const extraKeys = Object.keys(ps).filter((k) => !okKeys.has(k));
+    check(!extraKeys.length, `Config minimal (${Object.keys(ps).length} Keys${extraKeys.length ? ", unerwartet: " + extraKeys.join(",") : ""})`);
     if (target === "snapmaker" && virtuals.length) {
       // Serialisierung nach MixedFilament.cpp v2.3.5 (2er: m2+percent, 3er: g/w+m0, cm0)
       const expect = "1,2,1,1,50,0,g,w,m2,z0,xa0,xb0,d0,o0,u1,cm0;1,2,1,1,50,0,g1/2/3,w1/1/1,m0,z0,xa0,xb0,d0,o0,u2,cm0";

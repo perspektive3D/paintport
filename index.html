@@ -301,7 +301,7 @@ Es wird kein Code dieser Projekte ausgeliefert; Formate wurden zur Interoperabil
 // ============================================================
 "use strict";
 
-const PAINTPORT_VERSION = "0.8.3"; // einzige Versions-Quelle (UI-Badge + Generator-Metadata)
+const PAINTPORT_VERSION = "0.8.4"; // einzige Versions-Quelle (UI-Badge + Generator-Metadata)
 
 // Core-Fehler: englische Message + stabiler err.code (UI übersetzt via I18N "err.<code>")
 const CORE_ERRORS = {
@@ -313,6 +313,7 @@ const CORE_ERRORS = {
   ERR_NO_MODEL: "3D/3dmodel.model missing - not a valid 3MF file",
   ERR_MISSING_REF: "Referenced model file missing from archive",
   ERR_NO_OBJECTS: "No printable objects found in the file",
+  ERR_UNIT: "Unsupported model unit (only millimeter is supported)",
 };
 function coreError(code, detail) {
   const e = new Error(CORE_ERRORS[code] + (detail !== undefined ? ": " + detail : ""));
@@ -551,6 +552,7 @@ function parseAttrs(tag) {
 function parseModelXML(xml) {
   // Liefert { objects: Map<id, {vertices:Float64Array, tris, paints, components, hasMesh}>, buildItems: [] }
   const objects = new Map();
+  let sawMmuSeg = false; // Dialekt-Indiz, geht per Rückgabewert an load3MF (v0.8.3: ReferenceError)
   const objRe = /<object\b([^>]*)>([\s\S]*?)<\/object>/g;
   let om;
   while ((om = objRe.exec(xml)) !== null) {
@@ -610,7 +612,8 @@ function parseModelXML(xml) {
       buildItems.push({ objectid: a.objectid, transform: a.transform || null, printable: a.printable !== "0" });
     }
   }
-  return { objects, buildItems };
+  const unitM = /<model\b[^>]*?\bunit="([^"]*)"/.exec(xml);
+  return { objects, buildItems, sawMmuSeg, unit: unitM ? unitM[1] : "millimeter" };
 }
 
 // 3MF-Transform: 12 Werte, Zeilen-major 4x3; Punkt = [x y z 1] * M
@@ -658,6 +661,9 @@ async function load3MF(bytes) {
   const mainXml = text("3D/3dmodel.model");
   if (!mainXml) throw coreError("ERR_NO_MODEL");
   const main = parseModelXML(mainXml);
+  // Export schreibt immer millimeter — andere Einheiten würden still umskaliert
+  if (main.unit !== "millimeter") throw coreError("ERR_UNIT", main.unit);
+  if (main.sawMmuSeg) sawMmuSeg = true;
 
   // Externe Objekt-Dateien (Bambu-Produktions-Extension) nachladen
   const extCache = new Map();
@@ -666,7 +672,9 @@ async function load3MF(bytes) {
     if (!extCache.has(norm)) {
       const x = text(norm);
       if (!x) throw coreError("ERR_MISSING_REF", norm);
-      extCache.set(norm, parseModelXML(x));
+      const ext = parseModelXML(x);
+      if (ext.sawMmuSeg) sawMmuSeg = true;
+      extCache.set(norm, ext);
     }
     return extCache.get(norm);
   };
@@ -801,6 +809,7 @@ async function load3MF(bytes) {
       name: meta.name || mo.name || ("Objekt " + item.objectid),
       defaultExtruder: meta.extruder,
       transform: item.transform || null,
+      printable: item.printable,
       vertices, tris, paints, parts: partRanges,
     });
   }
@@ -814,6 +823,9 @@ async function load3MF(bytes) {
   // Druckoberfläche und dürfen weder Basis- noch Unbemalt-Zahlen verfälschen
   const stateCount = new Map();
   const baseCount = new Map(); // Basis-Extruder → unbemalte Dreiecke seiner Parts
+  // Anteile in Dreiecks-Äquivalenten (Leaf-Anteil je Mesh-Dreieck) — stateCount zählt
+  // Leaves und ist gegen totalTris nicht prozentfähig (ergab > 100 %)
+  const stateShare = new Map(), baseShare = new Map();
   let unpainted = 0, totalTris = 0, specialVolumes = 0;
   for (const o of outObjects) {
     o.triState = new Int16Array(o.paints.length); // dominanter Leaf-State je Dreieck (0 = unbemalt), für die Vorschau
@@ -823,12 +835,15 @@ async function load3MF(bytes) {
       let base = 0;
       for (let i = pr.firstTri; i < pr.firstTri + pr.triCount; i++) {
         const p = o.paints[i];
-        if (!p) { unpainted++; base++; continue; }
+        if (!p) { unpainted++; base++; baseShare.set(pr.extruder, (baseShare.get(pr.extruder) || 0) + 1); continue; }
         const local = new Map();
         collectStates(p, local, paintDialect);
-        let dom = 0, domN = 0;
+        let dom = 0, domN = 0, leaves = 0;
+        for (const c of local.values()) leaves += c;
         for (const [s, c] of local) {
           stateCount.set(s, (stateCount.get(s) || 0) + c);
+          if (s === 0) baseShare.set(pr.extruder, (baseShare.get(pr.extruder) || 0) + c / leaves);
+          else stateShare.set(s, (stateShare.get(s) || 0) + c / leaves);
           if (c > domN || (c === domN && s > dom)) { domN = c; dom = s; }
         }
         o.triState[i] = dom;
@@ -851,6 +866,8 @@ async function load3MF(bytes) {
       colorKnown: !!(filamentColors && filamentColors[i - 1]),
       paintedTris: stateCount.get(i) || 0,
       baseTris: baseCount.get(i) || 0,
+      paintedShare: stateShare.get(i) || 0,
+      baseShare: baseShare.get(i) || 0,
       isDefaultOf: outObjects.filter((o) => o.defaultExtruder === i).length,
     });
   }
@@ -862,6 +879,7 @@ function normalizeHex(c) {
   let h = String(c).trim().replace(/^#/, "");
   if (h.length === 8) h = h.slice(0, 6); // Bambu: RRGGBBAA
   if (h.length === 3) h = h.split("").map((x) => x + x).join("");
+  if (!/^[0-9a-fA-F]{1,6}$/.test(h)) return "#808080"; // Dateiinhalt landet in style-Attributen
   return "#" + h.toUpperCase().padStart(6, "0").slice(0, 6);
 }
 
@@ -1104,7 +1122,7 @@ function build3MF(model, plan) {
   modelParts.push(" </resources>\n <build>\n");
   model.objects.forEach((o, oi) => {
     const tf = o.transform ? ` transform="${xmlEscape(o.transform)}"` : "";
-    modelParts.push(`  <item objectid="${buildIds[oi]}"${tf} printable="1"/>\n`);
+    modelParts.push(`  <item objectid="${buildIds[oi]}"${tf} printable="${o.printable === false ? 0 : 1}"/>\n`);
   });
   modelParts.push(" </build>\n</model>\n");
 
@@ -1348,6 +1366,7 @@ const I18N = {
     "export.hintBbs": 'Ausgabe in Bambu Studio <b>als Projekt öffnen</b> (beim Drag&amp;Drop „Projekt" wählen) — Painting, Slot-Farben UND ColorMix-Mischfarben kommen mit (Mischfarben erscheinen als zusätzliche „Mixed Filament"-Slots; physisch + Mixe max. 16). Achtung: MakerWorld akzeptiert keine Mixed-3MFs zum Upload. Der Projekt-Modus kann Voreinstellungen zurücksetzen — Profile danach kurz prüfen.',
     "export.hintSnapmaker": 'Ausgabe in Snapmaker Orca <b>als Projekt öffnen</b> (beim Drag&amp;Drop „Projekt" wählen) — Painting, Slot-Farben UND ColorMix-Mischfarben kommen mit (Mischfarben erscheinen als zusätzliche Filamente hinter den physischen, „Full Spectrum"). Getestet mit Snapmaker Orca 2.3.5 — das Mix-Format ist versionslos, bei neuen Orca-Versionen kann es brechen. Der Projekt-Modus kann Voreinstellungen zurücksetzen — Profile danach kurz prüfen.',
     "export.noSlot": "Kein aktiver Slot.",
+    "export.mixOff": "ColorMix ist deaktiviert, aber eine Zuordnung nutzt noch eine Mischung — bitte Zuordnung prüfen.",
     "export.building": "Baue Export-3MF …",
     "export.vnote": " · {n} virtuelle(r) ColorMix-Extruder (IDs ab {from}, experimentell)",
     "export.done": 'Export fertig: {file} · MmPaintingVersion {mmv}{vnote}\nIn PrusaSlicer 2.9.6+ ALS PROJEKT öffnen (Datei → Öffnen bzw. beim Drag&Drop „Als Projekt öffnen" wählen — sonst werden virtuelle Extruder & Farben verworfen). Drucker mit {p} Extrudern — Spulen: {spools}',
@@ -1402,6 +1421,7 @@ const I18N = {
     "reset.btn": "Zurücksetzen — neues Modell laden",
     "reset.confirm": "Alles zurücksetzen? Geladenes Modell, Slot-Konfiguration und Zuordnung gehen verloren (Sprache und Design bleiben).",
     "err.ERR_NO_OBJECTS": "Keine druckbaren Objekte in der Datei gefunden.",
+    "err.ERR_UNIT": "Die Datei nutzt eine andere Einheit als Millimeter — das wird nicht unterstützt (die Größe würde sich ändern). Bitte im Slicer in mm neu speichern.",
     "err.ERR_BBS_NO_MIX": "Interner Fehler: ColorMix-Export ohne Zielformat.",
     "err.ERR_BBS_MAX16": "Bambu Studio unterstützt maximal 16 Filamente — Drucker-Extruderzahl verringern oder weniger Mischfarben verwenden.",
   },
@@ -1450,6 +1470,7 @@ const I18N = {
     "export.hintBbs": 'Open the output in Bambu Studio <b>as a project</b> (choose "project" when drag&amp;dropping) — painting, slot colors AND ColorMix blends carry over (blends appear as extra "mixed filament" slots; physical + blends max 16). Note: MakerWorld does not accept mixed-filament 3MFs for upload. Project mode may reset presets — double-check your profiles afterwards.',
     "export.hintSnapmaker": 'Open the output in Snapmaker Orca <b>as a project</b> (choose "project" when drag&amp;dropping) — painting, slot colors AND ColorMix blends carry over (blends appear as extra filaments after the physical ones, "Full Spectrum"). Tested with Snapmaker Orca 2.3.5 — the mix format is unversioned and may break with future Orca releases. Project mode may reset presets — double-check your profiles afterwards.',
     "export.noSlot": "No active slot.",
+    "export.mixOff": "ColorMix is disabled, but a mapping still uses a blend — please check the mapping.",
     "export.building": "Building export 3MF …",
     "export.vnote": " · {n} virtual ColorMix extruder(s) (IDs from {from}, experimental)",
     "export.done": 'Export done: {file} · MmPaintingVersion {mmv}{vnote}\nOpen it in PrusaSlicer 2.9.6+ AS A PROJECT (File → Open, or choose "Open as project" when drag&dropping — otherwise virtual extruders & colors are discarded). Printer with {p} extruders — spools: {spools}',
@@ -1504,6 +1525,7 @@ const I18N = {
     "reset.btn": "Reset — load a new model",
     "reset.confirm": "Reset everything? The loaded model, slot configuration and mapping will be lost (language and theme are kept).",
     "err.ERR_NO_OBJECTS": "No printable objects found in the file.",
+    "err.ERR_UNIT": "This file uses a unit other than millimeters, which is not supported (the size would change). Please re-save it in mm from your slicer.",
     "err.ERR_BBS_NO_MIX": "Internal error: ColorMix export without a target mix format.",
     "err.ERR_BBS_MAX16": "Bambu Studio supports at most 16 filaments — reduce the printer extruder count or use fewer blends.",
   },
@@ -1516,6 +1538,7 @@ let LANG = store.get("paintport_lang") || ((navigator.language || "en").toLowerC
 if (!I18N[LANG]) LANG = "en";
 const t = (key, params = {}) =>
   (I18N[LANG][key] ?? I18N.de[key] ?? key).replace(/\{(\w+)\}/g, (_, k) => (params[k] !== undefined ? params[k] : "{" + k + "}"));
+const esc = (v) => String(v).replace(/[&<>"']/g, (c) => "&#" + c.charCodeAt(0) + ";"); // Dateiinhalte vor innerHTML
 const fmtNum = (n) => n.toLocaleString(LANG === "de" ? "de-DE" : "en-US");
 function errMsg(err) {
   if (err && err.code && I18N.de["err." + err.code] !== undefined) return t("err." + err.code, { detail: err.detail ?? "" });
@@ -1593,15 +1616,18 @@ drop.addEventListener("drop", (e) => {
   if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
 });
 fi.addEventListener("change", () => { if (fi.files.length) handleFile(fi.files[0]); });
+// ColorMix aus/an: Mix-Zuordnungen fallen in renderMapping über bestOption() auf Spulen zurück
+$("allowMix").addEventListener("change", () => { if (MODEL) renderMapping(); });
 
 function setStatus(msg, cls) { const s = $("status"); s.textContent = msg; s.className = cls || ""; }
 
 async function handleFile(file) {
-  FILE_NAME = file.name.replace(/\.3mf$/i, "");
   setStatus(t("status.reading", { name: file.name }));
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
+    // Name + Modell gemeinsam übernehmen — bei Ladefehler bleibt der alte Stand konsistent
     MODEL = await PaintPortCore.load3MF(bytes);
+    FILE_NAME = file.name.replace(/\.3mf$/i, "");
     setStatus(t("status.loaded", { objects: MODEL.objects.length, tris: fmtNum(MODEL.totalTris), fils: MODEL.filaments.length }), "ok");
     renderAnalyse();
     renderSlots();
@@ -1618,15 +1644,17 @@ async function handleFile(file) {
 
 function renderAnalyse() {
   const rows = MODEL.filaments.map((f) => {
-    const pct = MODEL.totalTris ? (100 * f.paintedTris / MODEL.totalTris) : 0;
-    const basePct = MODEL.totalTris ? (100 * (f.baseTris || 0) / MODEL.totalTris) : 0;
+    // Anteile in Dreiecks-Äquivalenten (paintedTris/baseTris zählen Leaves bzw. ganze Dreiecke)
+    const pct = MODEL.totalTris ? (100 * f.paintedShare / MODEL.totalTris) : 0;
+    const basePct = MODEL.totalTris ? (100 * f.baseShare / MODEL.totalTris) : 0;
+    const shareN = (x) => fmtNum(x > 0 ? Math.max(1, Math.round(x)) : 0);
     const dflt = f.isDefaultOf ? ` <span class="badge">${t("analyse.badgeBaseOf", { n: f.isDefaultOf })}</span>` : "";
     const known = f.colorKnown ? "" : ` <span class="badge">${t("analyse.badgeColorUnknown")}</span>`;
     return `<tr><td><span class="sw" style="background:${f.color}"></span>Filament ${f.index} · ${f.color}${known}${dflt}</td>
-      <td>${t("analyse.trisPct", { n: fmtNum(f.paintedTris), pct: pct.toFixed(1) })}</td>
-      <td>${f.baseTris ? t("analyse.trisPct", { n: fmtNum(f.baseTris), pct: basePct.toFixed(1) }) : "—"}</td></tr>`;
+      <td>${t("analyse.trisPct", { n: shareN(f.paintedShare), pct: pct.toFixed(1) })}</td>
+      <td>${f.baseShare ? t("analyse.trisPct", { n: shareN(f.baseShare), pct: basePct.toFixed(1) }) : "—"}</td></tr>`;
   }).join("");
-  const objs = MODEL.objects.map((o) => `${o.name} (${t("analyse.baseFilament", { n: o.defaultExtruder })})`).join(", ");
+  const objs = MODEL.objects.map((o) => `${esc(o.name)} (${t("analyse.baseFilament", { n: o.defaultExtruder })})`).join(", ");
   const spec = MODEL.specialVolumes ? " · " + t("analyse.specialVolumes", { n: MODEL.specialVolumes }) : "";
   $("analyse").innerHTML = `<div class="hint" style="margin:0 0 10px">${t("analyse.objectsLine", { list: objs, n: fmtNum(MODEL.unpainted) })}${spec}</div>
     <table><thead><tr><th>${t("map.colFilament")}</th><th>${t("analyse.colPainted")}</th><th>${t("analyse.colBase")}</th></tr></thead><tbody>${rows}</tbody></table>`;
@@ -1655,11 +1683,12 @@ function renderSlots() {
 function syncHex(s) { $("slotHex" + s).value = $("slotCol" + s).value.toUpperCase(); }
 function syncCol(s) { const v = PaintPortCore.normalizeHex($("slotHex" + s).value); $("slotHex" + s).value = v; $("slotCol" + s).value = v; }
 const PRESETS = [
+  // Reihenfolge: CMY immer zuerst, dann K/W/RGB (Nils, 22.09.2026; vorher W/K vorne)
   { id: "CMY",      colors: ["#00FFFF", "#FF00FF", "#FFFF00"] },
-  { id: "WCMY",     colors: ["#FFFFFF", "#00FFFF", "#FF00FF", "#FFFF00"] },
-  { id: "KCMY",     colors: ["#000000", "#00FFFF", "#FF00FF", "#FFFF00"] },
-  { id: "WKCMY",    colors: ["#FFFFFF", "#000000", "#00FFFF", "#FF00FF", "#FFFF00"] },
-  { id: "WKCMYRGB", colors: ["#FFFFFF", "#000000", "#00FFFF", "#FF00FF", "#FFFF00", "#FF0000", "#00FF00", "#0000FF"] },
+  { id: "CMYW",     colors: ["#00FFFF", "#FF00FF", "#FFFF00", "#FFFFFF"] },
+  { id: "CMYK",     colors: ["#00FFFF", "#FF00FF", "#FFFF00", "#000000"] },
+  { id: "CMYKW",    colors: ["#00FFFF", "#FF00FF", "#FFFF00", "#000000", "#FFFFFF"] },
+  { id: "CMYKWRGB", colors: ["#00FFFF", "#FF00FF", "#FFFF00", "#000000", "#FFFFFF", "#FF0000", "#00FF00", "#0000FF"] },
   // Marken-Sets: echte Herstellerfarben (label = Anzeige, tipKey = i18n-Tooltip).
   // Panchroma: Polymaker Panchroma™ Translucent CMYK, Hex laut shop.polymaker.com (08/2026).
   { id: "PANCHROMA", label: "Panchroma™", tipKey: "preset.tip.panchroma",
@@ -1926,6 +1955,7 @@ async function doExport() {
       if (target.kind === "physical") {
         stateMap.set(src, target.slot);
       } else if (target.kind === "mix") {
+        if (!$("allowMix").checked) throw new Error(t("export.mixOff")); // Invariante: ColorMix aus ⇒ keine virtuellen Extruder
         const mix = target.mix;
         const key = mix.components.map((c) => c.slot + ":" + c.ratio).join("|");
         if (!virtualByKey.has(key)) {

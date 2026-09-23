@@ -2,6 +2,37 @@
 
 All notable changes to PaintPort. Format follows [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [0.8.4] — 2026-09-21
+
+Maintenance release after an external code/UX audit. The main conversion path
+(Bambu/MakerWorld → PrusaSlicer / Bambu Studio / Snapmaker Orca) is unchanged — exports
+are byte-identical to 0.8.3 apart from the version string.
+
+### Fixed
+- **Painted PrusaSlicer files failed to load** (`sawMmuSeg is not defined`) — a regression
+  from the 0.8.3 dialect work. This also broke re-importing PaintPort's own PrusaSlicer
+  exports.
+- **Unticking "Allow ColorMix blends" had no effect** until the next auto-mapping: existing
+  blend assignments stayed active and were exported. The mapping now switches to the closest
+  physical spool immediately, and the export refuses to write blends while the option is off.
+- **Disabled objects became printable**: `printable="0"` build items are now preserved.
+- **Percentages in the analysis could exceed 100 %** (sub-triangle leaves were divided by
+  mesh triangles). Shares are now computed per triangle and always add up to 100 %.
+- A failed import no longer renames the still-loaded previous model.
+
+### Security
+- Object names from the imported file are HTML-escaped before display, and non-hex filament
+  colours are neutralised. A crafted 3MF could previously inject markup into the page.
+
+### Changed
+- Spool presets reordered so CMY always comes first: `CMYW`, `CMYK`, `CMYKW`, `CMYKWRGB`
+  (formerly `WCMY`, `KCMY`, `WKCMY`, `WKCMYRGB` with white/black on slot 1). Export suffixes follow.
+- Files using a unit other than millimetres are rejected with a clear message instead of
+  being silently rescaled (PaintPort always writes millimetres).
+- New dependency-free regression suite (`test/test_regression.mjs`, synthetic fixtures) is
+  part of the release gate; the browser smoke test now polls via DevTools instead of racing
+  a virtual-time budget.
+
 ## [0.8.3] — 2026-08-13
 
 ### Fixed

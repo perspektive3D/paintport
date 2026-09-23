@@ -5,7 +5,10 @@
 // Usage: node test_preview_smoke.mjs paintport.html /tmp/preview_smoke.html
 //        (führt Chrome selbst aus, wertet document.title RESULT:{json} aus)
 import { readFileSync, writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const html = readFileSync(process.argv[2], "utf8");
 const out = process.argv[3] || "/tmp/paintport_preview_smoke.html";
@@ -336,7 +339,29 @@ const smoke = `
     R.autoExactStays = bestOption(MODEL.filaments[0], eqSlotsExact, true) === "p1";
     R.autoMixOff = (bestOption(MODEL.filaments[0], eqSlotsMix, false) || "").startsWith("p");
 
-    R.ok = orig.red > 100 && orig.green > 100 && R.mixOptionCount >= 3 &&
+    // --- 16) Audit-Fixes v0.8.4: (a) ColorMix-Checkbox wirkt sofort (vorher ohne
+    //         Change-Handler → Mixe blieben aktiv und wurden exportiert),
+    //         (b) Objektnamen aus der Datei landen escaped im DOM.
+    const am = document.getElementById("allowMix");
+    am.checked = true; am.dispatchEvent(new Event("change"));
+    autoMap();
+    const mapSels = () => [...document.querySelectorAll("#mapTable select")];
+    const firstSel = mapSels()[0];
+    if (![...firstSel.options].some((o) => o.value === "mix")) throw new Error("Schritt 16: keine Mix-Option");
+    firstSel.value = "mix"; firstSel.dispatchEvent(new Event("change"));
+    R.mixToggleHadMix = mapSels().some((x) => x.value.startsWith("mix"));
+    am.checked = false; am.dispatchEvent(new Event("change"));
+    R.mixToggleOffOk = mapSels().every((x) => x.value.startsWith("p")) &&
+      mapSels().every((x) => ![...x.options].some((o) => o.value.startsWith("mix")));
+    am.checked = true; am.dispatchEvent(new Event("change"));
+    const nameBak = MODEL.objects[0].name;
+    MODEL.objects[0].name = '<img id="xssprobe" src="x">';
+    renderAnalyse();
+    R.nameEscaped = !document.getElementById("xssprobe") && document.getElementById("analyse").textContent.includes("xssprobe");
+    MODEL.objects[0].name = nameBak; renderAnalyse();
+
+    R.ok = R.mixToggleHadMix === true && R.mixToggleOffOk === true && R.nameEscaped === true &&
+           orig.red > 100 && orig.green > 100 && R.mixOptionCount >= 3 &&
            R.pinnedResHasSwatch && R.collisionBadges === 2 &&
            res.white > 200 && res.red < 20 && res.green < 20 &&
            R.exportVirtualMatches === true &&
@@ -360,24 +385,56 @@ const smoke = `
 
 writeFileSync(out, html.replace("</body>", smoke + "\n</body>"));
 
-// --virtual-time-budget beschleunigt nur Timer, nicht echte async-I/O
-// (DecompressionStream im Export-Check) → Chrome dumpt gelegentlich zu früh. Daher Retries.
-let m = null;
-for (let attempt = 1; attempt <= 3 && !m; attempt++) {
-  let dom = "";
+// Ergebnis per DevTools-Protokoll pollen (Node ≥ 22: eingebautes WebSocket, keine Deps).
+// Vorher: --virtual-time-budget + --dump-dom. Das Budget beschleunigt nur Timer, nicht echte
+// async-I/O (DecompressionStream im Export-Check) → Chrome dumpte meist zu früh (gemessen
+// 21.09.2026: nur ~1 von 6 Läufen lieferte ein RESULT, das Gate hing an 3 Retries).
+async function runViaCdp() {
+  const profile = mkdtempSync(join(tmpdir(), "paintport_smoke_"));
+  const chrome = spawn(CHROME, ["--headless=new", "--disable-gpu-sandbox", "--use-angle=metal",
+    "--remote-debugging-port=0", "--user-data-dir=" + profile, "--no-first-run", "file://" + out],
+    { stdio: ["ignore", "ignore", "pipe"] });
   try {
-    dom = execFileSync(CHROME, [
-      "--headless=new", "--disable-gpu-sandbox", "--use-angle=metal",
-      "--virtual-time-budget=15000", "--dump-dom", "file://" + out,
-    ], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-  } catch (e) {
-    console.error(`Chrome-Aufruf fehlgeschlagen (Versuch ${attempt}):`, e.message);
-    continue;
+    const base = await new Promise((resolve, reject) => {
+      let buf = "";
+      const to = setTimeout(() => reject(new Error("DevTools-Port nicht gemeldet")), 20000);
+      chrome.stderr.on("data", (d) => {
+        buf += d;
+        const mm = /DevTools listening on ws:\/\/([^\/]+)\//.exec(buf);
+        if (mm) { clearTimeout(to); resolve("http://" + mm[1]); }
+      });
+      chrome.on("exit", () => reject(new Error("Chrome vorzeitig beendet")));
+    });
+    const deadline = Date.now() + 90000;
+    let ws = null;
+    while (!ws && Date.now() < deadline) {
+      const pages = await (await fetch(base + "/json/list")).json();
+      const pg = pages.find((x) => x.type === "page" && x.url.startsWith("file://"));
+      if (pg) ws = new WebSocket(pg.webSocketDebuggerUrl); else await new Promise((r) => setTimeout(r, 200));
+    }
+    if (!ws) throw new Error("Testseite nicht gefunden");
+    await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = () => reject(new Error("WebSocket-Fehler")); });
+    let id = 0;
+    const title = () => new Promise((resolve) => {
+      const my = ++id;
+      const on = (ev) => { const msg = JSON.parse(ev.data); if (msg.id === my) { ws.removeEventListener("message", on); resolve(msg.result?.result?.value || ""); } };
+      ws.addEventListener("message", on);
+      ws.send(JSON.stringify({ id: my, method: "Runtime.evaluate", params: { expression: "document.title", returnByValue: true } }));
+    });
+    while (Date.now() < deadline) {
+      const tt = await title();
+      if (tt.startsWith("RESULT:")) return tt.slice(7);
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    throw new Error("Kein RESULT innerhalb 90 s");
+  } finally {
+    chrome.kill();
+    try { rmSync(profile, { recursive: true, force: true }); } catch (e) { /* Profil-Reste egal */ }
   }
-  m = dom.match(/<title>RESULT:([\s\S]*?)<\/title>/);
-  if (!m) console.error(`Kein RESULT im DOM (Versuch ${attempt}) — Smoke-Script nicht fertig, retry …`);
 }
-if (!m) { console.error("Kein RESULT nach 3 Versuchen."); process.exit(1); }
+let m = null;
+try { m = [null, await runViaCdp()]; } catch (e) { console.error("Smoke-Lauf fehlgeschlagen:", e.message); }
+if (!m) process.exit(1);
 const R = JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&amp;/g, "&"));
 console.log("Preview-Smoke:", JSON.stringify(R, null, 1));
 process.exit(R.ok ? 0 : 1);
